@@ -1,0 +1,60 @@
+{
+  "mode": "strict",
+  "defaultAction": "deny",
+  "rules": [
+    {
+      "id": "openai-api",
+      "domain": "api.openai.com",
+      "paths": ["/v1/chat/completions", "/v1/embeddings", "/v1/models"],
+      "methods": ["POST", "GET"],
+      "rateLimit": {
+        "requestsPerMinute": 60
+      }
+    },
+    {
+      "id": "anthropic-api",
+      "domain": "api.anthropic.com",
+      "paths": ["/v1/messages", "/v1/complete"],
+      "methods": ["POST"],
+      "rateLimit": {
+        "requestsPerMinute": 60
+      }
+    },
+    {
+      "id": "github-readonly",
+      "domain": "api.github.com",
+      "paths": ["/repos/**", "/users/**", "/orgs/**"],
+      "methods": ["GET"],
+      "rateLimit": {
+        "requestsPerMinute": 100
+      }
+    },
+    {
+      "id": "github-raw",
+      "domain": "raw.githubusercontent.com",
+      "paths": ["/**"],
+      "methods": ["GET"],
+      "rateLimit": {
+        "requestsPerMinute": 100
+      }
+    },
+    {
+      "id": "pypi",
+      "domain": "pypi.org",
+      "paths": ["/pypi/**", "/simple/**"],
+      "methods": ["GET"],
+      "rateLimit": {
+        "requestsPerMinute": 30
+      }
+    },
+    {
+      "id": "npmjs",
+      "domain": "registry.npmjs.org",
+      "paths": ["/**"],
+      "methods": ["GET"],
+      "rateLimit": {
+        "requestsPerMinute": 30
+      }
+    }
+  ]
+}
