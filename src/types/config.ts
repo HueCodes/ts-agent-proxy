@@ -26,6 +26,23 @@ export interface LoggingConfig {
   console?: boolean;
   /** Whether to use pretty printing for console output */
   pretty?: boolean;
+  /** Log request headers (redact sensitive ones) */
+  logHeaders?: boolean;
+  /** Log request body (up to maxBodyLogSize bytes) */
+  logBody?: boolean;
+  /** Maximum body size to log in bytes */
+  maxBodyLogSize?: number;
+  /** Headers to redact from logs */
+  redactHeaders?: string[];
+}
+
+export interface AdminConfig {
+  /** Whether the admin server is enabled */
+  enabled: boolean;
+  /** Admin server port */
+  port: number;
+  /** Admin server host */
+  host: string;
 }
 
 export interface ServerConfig {
@@ -39,6 +56,8 @@ export interface ServerConfig {
   tls?: TlsConfig;
   /** Logging configuration */
   logging: LoggingConfig;
+  /** Admin server configuration */
+  admin?: AdminConfig;
 }
 
 export interface ProxyConfig {

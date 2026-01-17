@@ -7,6 +7,18 @@ export interface RateLimitConfig {
   requestsPerMinute: number;
 }
 
+/**
+ * Header transformation rules for requests/responses.
+ */
+export interface HeaderTransform {
+  /** Headers to add or overwrite */
+  set?: Record<string, string>;
+  /** Headers to remove */
+  remove?: string[];
+  /** Headers to rename (oldName -> newName) */
+  rename?: Record<string, string>;
+}
+
 export interface AllowlistRule {
   /** Unique identifier for the rule */
   id: string;
@@ -22,6 +34,14 @@ export interface AllowlistRule {
   description?: string;
   /** Whether the rule is enabled (default: true) */
   enabled?: boolean;
+  /** Client IPs this rule applies to (CIDR notation supported) */
+  clientIps?: string[];
+  /** Client IPs to exclude from this rule */
+  excludeClientIps?: string[];
+  /** Request header transformations */
+  requestHeaders?: HeaderTransform;
+  /** Response header transformations */
+  responseHeaders?: HeaderTransform;
 }
 
 export type AllowlistMode = 'strict' | 'permissive';

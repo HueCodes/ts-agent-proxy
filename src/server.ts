@@ -1,5 +1,10 @@
 /**
  * Main proxy server implementation.
+ *
+ * This module contains the ProxyServer class which orchestrates all proxy
+ * components including filtering, rate limiting, and request handling.
+ *
+ * @module server
  */
 
 import http from 'node:http';
@@ -16,12 +21,28 @@ import { createConnectHandler, type ConnectHandler } from './proxy/connect-handl
 import { createForwardProxy, type ForwardProxy } from './proxy/forward-proxy.js';
 import { createCertManager, type CertManager } from './proxy/mitm/cert-manager.js';
 import { createMitmInterceptor, type MitmInterceptor } from './proxy/mitm/interceptor.js';
+import { createMetricsCollector, type MetricsCollector } from './admin/metrics.js';
+import { createAdminServer, type AdminServer } from './admin/admin-server.js';
 
 export interface ProxyServerOptions {
   config: ProxyConfig;
   logger?: Logger;
 }
 
+/**
+ * Main proxy server class.
+ *
+ * Orchestrates all proxy components and manages the server lifecycle.
+ *
+ * @example
+ * ```typescript
+ * const server = new ProxyServer({ config, logger });
+ * await server.start();
+ *
+ * // Later...
+ * await server.stop();
+ * ```
+ */
 export class ProxyServer {
   private readonly config: ProxyConfig;
   private readonly logger: Logger;
@@ -32,8 +53,16 @@ export class ProxyServer {
   private readonly forwardProxy: ForwardProxy;
   private readonly certManager?: CertManager;
   private readonly mitmInterceptor?: MitmInterceptor;
+  private readonly metrics: MetricsCollector;
+  private readonly adminServer?: AdminServer;
   private server?: http.Server;
+  private isRunning = false;
 
+  /**
+   * Creates a new ProxyServer.
+   *
+   * @param options - Server configuration options
+   */
   constructor(options: ProxyServerOptions) {
     this.config = options.config;
     this.logger = options.logger ?? createLogger({
@@ -73,6 +102,21 @@ export class ProxyServer {
         certManager: this.certManager,
       });
     }
+
+    // Initialize metrics collector
+    this.metrics = createMetricsCollector();
+
+    // Initialize admin server if enabled
+    if (this.config.server.admin?.enabled) {
+      this.adminServer = createAdminServer({
+        host: this.config.server.admin.host,
+        port: this.config.server.admin.port,
+        logger: this.logger,
+        metrics: this.metrics,
+        getRulesCount: () => this.config.allowlist.rules.length,
+        isReady: () => this.isRunning,
+      });
+    }
   }
 
   /**
@@ -87,6 +131,11 @@ export class ProxyServer {
 
   /**
    * Start the proxy server.
+   *
+   * Initializes all components and starts listening for connections.
+   * Also starts the admin server if enabled.
+   *
+   * @returns Promise that resolves when server is listening
    */
   async start(): Promise<void> {
     await this.initialize();
@@ -103,8 +152,14 @@ export class ProxyServer {
       this.logger.error({ error }, 'Server error');
     });
 
+    // Start admin server if enabled
+    if (this.adminServer) {
+      await this.adminServer.start();
+    }
+
     return new Promise((resolve) => {
       this.server!.listen(this.config.server.port, this.config.server.host, () => {
+        this.isRunning = true;
         this.logger.info(
           { host: this.config.server.host, port: this.config.server.port, mode: this.config.server.mode },
           'Proxy server started'
@@ -116,8 +171,19 @@ export class ProxyServer {
 
   /**
    * Stop the proxy server.
+   *
+   * Stops both the main proxy server and the admin server if running.
+   *
+   * @returns Promise that resolves when server is stopped
    */
   async stop(): Promise<void> {
+    this.isRunning = false;
+
+    // Stop admin server first
+    if (this.adminServer) {
+      await this.adminServer.stop();
+    }
+
     if (!this.server) return;
 
     return new Promise((resolve, reject) => {
@@ -192,14 +258,48 @@ export class ProxyServer {
 
   /**
    * Get CA certificate PEM (for MITM mode).
+   *
+   * @returns CA certificate PEM string, or null if not in MITM mode
    */
   getCaCertPem(): string | null {
     return this.certManager?.getCaCertPem() ?? null;
+  }
+
+  /**
+   * Get current metrics.
+   *
+   * @returns Current proxy metrics
+   */
+  getMetrics() {
+    return this.metrics.getMetrics(this.config.allowlist.rules.length);
+  }
+
+  /**
+   * Get the metrics collector for recording custom metrics.
+   *
+   * @returns The metrics collector instance
+   */
+  getMetricsCollector(): MetricsCollector {
+    return this.metrics;
   }
 }
 
 /**
  * Create a proxy server.
+ *
+ * Factory function for creating ProxyServer instances.
+ *
+ * @param options - Server configuration options
+ * @returns New ProxyServer instance
+ *
+ * @example
+ * ```typescript
+ * const server = createProxyServer({
+ *   config: loadProxyConfig(),
+ *   logger: createLogger({ level: 'info' })
+ * });
+ * await server.start();
+ * ```
  */
 export function createProxyServer(options: ProxyServerOptions): ProxyServer {
   return new ProxyServer(options);

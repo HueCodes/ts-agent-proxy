@@ -10,6 +10,8 @@ import { createProxyServer, type ProxyServer } from './server.js';
 import { createDefaultConfig, type ProxyConfig } from './types/config.js';
 import type { AllowlistConfig } from './types/allowlist.js';
 import { createLogger } from './logging/logger.js';
+import { parseAllowlistConfigJson } from './validation/validator.js';
+import { ConfigurationError } from './errors.js';
 
 // Re-export types
 export * from './types/allowlist.js';
@@ -22,15 +24,93 @@ export { createAuditLogger, AuditLogger } from './logging/audit-logger.js';
 export { createAllowlistMatcher, AllowlistMatcher } from './filter/allowlist-matcher.js';
 export { createDomainMatcher, DomainMatcher } from './filter/domain-matcher.js';
 export { createRateLimiter, RateLimiter } from './filter/rate-limiter.js';
+export { createIpMatcher, IpMatcher, matchesIp, matchesIpWithExclusion } from './filter/ip-matcher.js';
 export { createCertManager, CertManager } from './proxy/mitm/cert-manager.js';
 export * from './integration/wasm-bridge.js';
 
+// Re-export admin components
+export {
+  createMetricsCollector,
+  MetricsCollector,
+  type ProxyMetrics,
+  type RuleMetrics,
+} from './admin/metrics.js';
+export {
+  createAdminServer,
+  AdminServer,
+  type AdminServerConfig,
+  type HealthResponse,
+} from './admin/admin-server.js';
+
+// Re-export config watcher
+export {
+  createConfigWatcher,
+  ConfigWatcher,
+  watchConfig,
+  type ConfigWatcherOptions,
+} from './config/watcher.js';
+
+// Re-export transform utilities
+export {
+  transformHeaders,
+  getHeader,
+  deleteHeader,
+  substituteVariables,
+  createTransformContext,
+  applyRequestTransform,
+  applyResponseTransform,
+  type TransformContext,
+} from './transform/header-transformer.js';
+
+// Re-export errors
+export * from './errors.js';
+
+// Re-export validation (excluding type re-exports to avoid conflicts)
+export {
+  validateAllowlistConfig,
+  validateServerConfig,
+  validateProxyConfig,
+  parseAllowlistConfigJson,
+  parseProxyConfigJson,
+} from './validation/index.js';
+export {
+  AllowlistRuleSchema,
+  AllowlistConfigSchema,
+  ServerConfigSchema,
+  ProxyConfigSchema,
+  RateLimitConfigSchema,
+  HeaderTransformSchema,
+  HttpMethodSchema,
+  LoggingConfigSchema,
+  TlsConfigSchema,
+  AdminConfigSchema,
+} from './validation/index.js';
+
 /**
- * Load allowlist configuration from a JSON file.
+ * Load allowlist configuration from a JSON file with validation.
+ *
+ * @param filePath - Path to the JSON configuration file
+ * @returns Validated allowlist configuration
+ * @throws ConfigurationError if the file cannot be read or config is invalid
+ *
+ * @example
+ * ```typescript
+ * const config = loadAllowlistConfig('./config/allowlist.json');
+ * console.log(`Loaded ${config.rules.length} rules`);
+ * ```
  */
 export function loadAllowlistConfig(filePath: string): AllowlistConfig {
-  const content = fs.readFileSync(filePath, 'utf-8');
-  return JSON.parse(content) as AllowlistConfig;
+  let content: string;
+  try {
+    content = fs.readFileSync(filePath, 'utf-8');
+  } catch (error) {
+    throw new ConfigurationError(
+      `Failed to read configuration file: ${error instanceof Error ? error.message : 'Unknown error'}`,
+      filePath
+    );
+  }
+
+  return parseAllowlistConfigJson(content, filePath);
 }
 
 /**
@@ -61,18 +141,24 @@ async function main(): Promise<void> {
   const portArg = args.find(a => a.startsWith('--port='));
   const hostArg = args.find(a => a.startsWith('--host='));
   const modeArg = args.find(a => a.startsWith('--mode='));
+  const watchArg = args.includes('--watch');
+  const adminArg = args.find(a => a.startsWith('--admin-port='));
 
   // Load configuration
-  let config = createDefaultConfig();
+  const config = createDefaultConfig();
+
+  // Determine allowlist path
+  const allowlistPath = configArg
+    ? configArg.split('=')[1]
+    : path.join(process.cwd(), 'config', 'allowlist.json');
 
   // Load allowlist from default location if exists
-  const defaultAllowlistPath = path.join(process.cwd(), 'config', 'allowlist.json');
-  if (fs.existsSync(defaultAllowlistPath)) {
+  if (fs.existsSync(allowlistPath)) {
     try {
-      config.allowlist = loadAllowlistConfig(defaultAllowlistPath);
-      logger.info({ path: defaultAllowlistPath }, 'Loaded allowlist configuration');
+      config.allowlist = loadAllowlistConfig(allowlistPath);
+      logger.info({ path: allowlistPath }, 'Loaded allowlist configuration');
     } catch (error) {
-      logger.error({ error, path: defaultAllowlistPath }, 'Failed to load allowlist');
+      logger.error({ error, path: allowlistPath }, 'Failed to load allowlist');
     }
   }
 
@@ -90,12 +176,27 @@ async function main(): Promise<void> {
     }
   }
 
+  // Enable admin server if port specified
+  if (adminArg) {
+    config.server.admin = {
+      enabled: true,
+      port: parseInt(adminArg.split('=')[1], 10),
+      host: '127.0.0.1',
+    };
+  }
+
   // Create and start server
   const server = createProxyServer({ config, logger });
+
+  // Config watcher cleanup function
+  let stopWatching: (() => void) | undefined;
 
   // Handle shutdown gracefully
   const shutdown = async () => {
     logger.info('Shutting down...');
+    if (stopWatching) {
+      stopWatching();
+    }
     await server.stop();
     process.exit(0);
   };
@@ -106,10 +207,28 @@ async function main(): Promise<void> {
   try {
     await server.start();
 
+    // Start config watcher if enabled
+    if (watchArg && fs.existsSync(allowlistPath)) {
+      const { watchConfig: watchConfigFn } = await import('./config/watcher.js');
+      stopWatching = watchConfigFn({
+        filePath: allowlistPath,
+        onReload: (newConfig) => {
+          server.reloadAllowlist(newConfig);
+          logger.info({ rulesCount: newConfig.rules.length }, 'Configuration reloaded');
+        },
+        onError: (error) => {
+          logger.error({ error }, 'Configuration reload failed');
+        },
+        logger,
+      });
+      logger.info({ path: allowlistPath }, 'Watching configuration for changes');
+    }
+
     logger.info(
       {
         rulesCount: config.allowlist.rules.length,
         mode: config.server.mode,
+        watching: watchArg,
       },
       'Proxy ready'
     );
