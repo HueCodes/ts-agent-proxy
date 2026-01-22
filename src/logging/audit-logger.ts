@@ -13,6 +13,7 @@ import { randomUUID } from 'node:crypto';
 import type { Logger } from './logger.js';
 import type { MatchResult, RequestInfo, AllowlistRule } from '../types/allowlist.js';
 import type { RateLimitResult } from '../filter/rate-limiter.js';
+import type { LogDestination } from './log-destinations.js';
 
 /** Default headers to redact */
 const DEFAULT_REDACT_HEADERS = [
@@ -30,11 +31,58 @@ const DEFAULT_REDACT_HEADERS = [
 ];
 
 /**
+ * Denial reason codes.
+ */
+export enum DenialReasonCode {
+  NO_MATCHING_RULE = 'NO_MATCHING_RULE',
+  DOMAIN_NOT_ALLOWED = 'DOMAIN_NOT_ALLOWED',
+  PATH_NOT_ALLOWED = 'PATH_NOT_ALLOWED',
+  METHOD_NOT_ALLOWED = 'METHOD_NOT_ALLOWED',
+  IP_NOT_ALLOWED = 'IP_NOT_ALLOWED',
+  IP_EXCLUDED = 'IP_EXCLUDED',
+  RATE_LIMITED = 'RATE_LIMITED',
+  REQUEST_TOO_LARGE = 'REQUEST_TOO_LARGE',
+  TIMEOUT = 'TIMEOUT',
+  UPSTREAM_ERROR = 'UPSTREAM_ERROR',
+  INTERNAL_ERROR = 'INTERNAL_ERROR',
+}
+
+/**
+ * Denial reason with code and message.
+ */
+export interface DenialReason {
+  /** Machine-readable code */
+  code: DenialReasonCode;
+  /** Human-readable message */
+  message: string;
+  /** Additional details */
+  details?: Record<string, any>;
+}
+
+/**
+ * Response information for audit log.
+ */
+export interface ResponseInfo {
+  /** HTTP status code */
+  statusCode: number;
+  /** Status message */
+  statusMessage?: string;
+  /** Response size in bytes */
+  contentLength?: number;
+  /** Content type */
+  contentType?: string;
+}
+
+/**
  * Audit log entry structure.
  */
 export interface AuditLogEntry {
   /** Unique request ID for correlation */
   requestId: string;
+  /** Trace ID for distributed tracing correlation */
+  traceId?: string;
+  /** Span ID for distributed tracing correlation */
+  spanId?: string;
   /** Timestamp of the event */
   timestamp: string;
   /** Type of event */
@@ -43,38 +91,95 @@ export interface AuditLogEntry {
   decision: 'allowed' | 'denied' | 'rate_limited';
   /** Request information */
   request: RequestInfo;
+  /** Response information */
+  response?: ResponseInfo;
   /** Headers (if logging enabled, redacted) */
   headers?: Record<string, string>;
+  /** Response headers (if logging enabled, redacted) */
+  responseHeaders?: Record<string, string>;
   /** Request body (if logging enabled, truncated) */
   body?: string;
   /** Match result */
   matchResult?: MatchResult;
   /** Rate limit result */
   rateLimitResult?: RateLimitResult;
+  /** Structured denial reason */
+  denialReason?: DenialReason;
   /** Error message if applicable */
   errorMessage?: string;
   /** Request duration in milliseconds */
   durationMs?: number;
+  /** Bytes sent */
+  bytesSent?: number;
+  /** Bytes received */
+  bytesReceived?: number;
 }
+
+/**
+ * Logging level for requests.
+ */
+export type LoggingLevel = 'none' | 'minimal' | 'headers' | 'full';
+
+/**
+ * PII scrubbing configuration.
+ */
+export interface PiiScrubbingConfig {
+  /** Enable PII scrubbing in body content */
+  enabled: boolean;
+  /** Patterns to scrub (regex strings) */
+  patterns?: string[];
+  /** Replacement text (default: '[REDACTED]') */
+  replacement?: string;
+}
+
+/**
+ * Default PII patterns.
+ */
+export const DEFAULT_PII_PATTERNS = [
+  // Credit card numbers
+  '\\b(?:\\d{4}[- ]?){3}\\d{4}\\b',
+  // SSN
+  '\\b\\d{3}-\\d{2}-\\d{4}\\b',
+  // Email addresses
+  '\\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}\\b',
+  // Phone numbers
+  '\\b(?:\\+?1[-.]?)?\\(?\\d{3}\\)?[-.]?\\d{3}[-.]?\\d{4}\\b',
+  // API keys (common patterns)
+  '\\b[A-Za-z0-9]{32,}\\b',
+  // JWT tokens
+  'eyJ[A-Za-z0-9_-]*\\.eyJ[A-Za-z0-9_-]*\\.[A-Za-z0-9_-]*',
+];
 
 /**
  * Options for the audit logger.
  */
 export interface AuditLoggerOptions {
-  /** Path to the audit log file */
+  /** Path to the audit log file (legacy, use destinations instead) */
   filePath?: string;
+  /** Log destinations (file, console, webhook, etc.) */
+  destinations?: LogDestination[];
   /** Whether to also log to the main logger */
   logToMain?: boolean;
   /** Main logger instance */
   logger?: Logger;
-  /** Whether to log request headers */
+  /** Default logging level */
+  loggingLevel?: LoggingLevel;
+  /** Whether to log request headers (deprecated, use loggingLevel) */
   logHeaders?: boolean;
-  /** Whether to log request body */
+  /** Whether to log request body (deprecated, use loggingLevel) */
   logBody?: boolean;
   /** Maximum body size to log in bytes */
   maxBodyLogSize?: number;
   /** Headers to redact (case-insensitive) */
   redactHeaders?: string[];
+  /** PII scrubbing configuration */
+  piiScrubbing?: PiiScrubbingConfig;
+  /** Sampling rate (0.0 to 1.0, default: 1.0 = log all) */
+  samplingRate?: number;
+  /** Only log requests with these status codes */
+  logStatusCodes?: number[];
+  /** Log response headers */
+  logResponseHeaders?: boolean;
 }
 
 /**
@@ -84,26 +189,33 @@ export interface AuditLoggerOptions {
  * - Request header logging with automatic redaction
  * - Request body logging with size limits
  * - Correlation IDs for request tracing
+ * - Multiple log destinations
+ * - PII scrubbing
+ * - Sampling
  *
  * @example
  * ```typescript
  * const auditLogger = new AuditLogger({
  *   filePath: './logs/audit.log',
- *   logHeaders: true,
+ *   loggingLevel: 'headers',
  *   redactHeaders: ['authorization', 'x-api-key'],
- *   logBody: true,
- *   maxBodyLogSize: 1024
+ *   piiScrubbing: { enabled: true },
+ *   samplingRate: 0.5
  * });
  *
- * auditLogger.logRequest(request, matchResult, 150);
+ * auditLogger.logRequest(request, matchResult, { durationMs: 150 });
  * ```
  */
 export class AuditLogger {
-  private readonly options: Required<Omit<AuditLoggerOptions, 'filePath' | 'logger'>> & {
+  private readonly options: Required<Omit<AuditLoggerOptions, 'filePath' | 'logger' | 'destinations' | 'piiScrubbing' | 'logStatusCodes'>> & {
     filePath?: string;
     logger?: Logger;
+    destinations: LogDestination[];
+    piiScrubbing?: PiiScrubbingConfig;
+    logStatusCodes?: number[];
   };
   private readonly redactHeadersLower: Set<string>;
+  private readonly piiPatterns: RegExp[];
   private writeStream?: fs.WriteStream;
 
   /**
@@ -114,18 +226,40 @@ export class AuditLogger {
   constructor(options: AuditLoggerOptions = {}) {
     const redactHeaders = options.redactHeaders ?? DEFAULT_REDACT_HEADERS;
 
+    // Determine logging level from legacy options if not specified
+    let loggingLevel = options.loggingLevel;
+    if (!loggingLevel) {
+      if (options.logBody) loggingLevel = 'full';
+      else if (options.logHeaders) loggingLevel = 'headers';
+      else loggingLevel = 'minimal';
+    }
+
     this.options = {
       filePath: options.filePath,
+      destinations: options.destinations ?? [],
       logToMain: options.logToMain ?? true,
       logger: options.logger,
-      logHeaders: options.logHeaders ?? false,
-      logBody: options.logBody ?? false,
+      loggingLevel,
+      logHeaders: options.logHeaders ?? (loggingLevel === 'headers' || loggingLevel === 'full'),
+      logBody: options.logBody ?? (loggingLevel === 'full'),
       maxBodyLogSize: options.maxBodyLogSize ?? 1024,
       redactHeaders,
+      piiScrubbing: options.piiScrubbing,
+      samplingRate: options.samplingRate ?? 1.0,
+      logStatusCodes: options.logStatusCodes,
+      logResponseHeaders: options.logResponseHeaders ?? false,
     };
 
     // Pre-compute lowercase header names for fast lookup
     this.redactHeadersLower = new Set(redactHeaders.map((h) => h.toLowerCase()));
+
+    // Compile PII patterns
+    if (this.options.piiScrubbing?.enabled) {
+      const patterns = this.options.piiScrubbing.patterns ?? DEFAULT_PII_PATTERNS;
+      this.piiPatterns = patterns.map((p) => new RegExp(p, 'gi'));
+    } else {
+      this.piiPatterns = [];
+    }
 
     if (this.options.filePath) {
       this.initFileStream();
@@ -150,6 +284,52 @@ export class AuditLogger {
   }
 
   /**
+   * Check if this request should be logged based on sampling.
+   */
+  private shouldLog(statusCode?: number): boolean {
+    // Check sampling rate
+    if (this.options.samplingRate < 1.0 && Math.random() > this.options.samplingRate) {
+      return false;
+    }
+
+    // Check status code filter
+    if (this.options.logStatusCodes && statusCode !== undefined) {
+      return this.options.logStatusCodes.includes(statusCode);
+    }
+
+    return true;
+  }
+
+  /**
+   * Scrub PII from content.
+   */
+  private scrubPii(content: string): string {
+    if (!this.options.piiScrubbing?.enabled || this.piiPatterns.length === 0) {
+      return content;
+    }
+
+    const replacement = this.options.piiScrubbing.replacement ?? '[REDACTED]';
+    let result = content;
+
+    for (const pattern of this.piiPatterns) {
+      result = result.replace(pattern, replacement);
+    }
+
+    return result;
+  }
+
+  /**
+   * Create a denial reason from a match result or error.
+   */
+  createDenialReason(
+    code: DenialReasonCode,
+    message: string,
+    details?: Record<string, any>
+  ): DenialReason {
+    return { code, message, details };
+  }
+
+  /**
    * Log a request decision.
    *
    * @param request - The request information
@@ -162,8 +342,15 @@ export class AuditLogger {
     optionsOrDurationMs?: number | {
       durationMs?: number;
       headers?: Record<string, string | string[] | undefined>;
+      responseHeaders?: Record<string, string | string[] | undefined>;
       body?: string | Buffer;
       requestId?: string;
+      traceId?: string;
+      spanId?: string;
+      response?: ResponseInfo;
+      denialReason?: DenialReason;
+      bytesSent?: number;
+      bytesReceived?: number;
     }
   ): void {
     // Handle backward compatibility
@@ -171,24 +358,49 @@ export class AuditLogger {
       ? { durationMs: optionsOrDurationMs }
       : optionsOrDurationMs;
 
+    // Check if we should log this request
+    if (!this.shouldLog(options?.response?.statusCode)) {
+      return;
+    }
+
     const entry: AuditLogEntry = {
       requestId: options?.requestId ?? randomUUID(),
+      traceId: options?.traceId,
+      spanId: options?.spanId,
       timestamp: new Date().toISOString(),
       eventType: 'request',
       decision: matchResult.allowed ? 'allowed' : 'denied',
       request,
+      response: options?.response,
       matchResult,
       durationMs: options?.durationMs,
+      bytesSent: options?.bytesSent,
+      bytesReceived: options?.bytesReceived,
     };
 
-    // Add redacted headers if enabled
-    if (this.options.logHeaders && options?.headers) {
-      entry.headers = this.redactHeaders(options.headers);
+    // Add denial reason for denied requests
+    if (!matchResult.allowed) {
+      entry.denialReason = options?.denialReason ?? this.createDenialReason(
+        DenialReasonCode.NO_MATCHING_RULE,
+        matchResult.reason ?? 'Request denied by allowlist rules'
+      );
     }
 
-    // Add truncated body if enabled
-    if (this.options.logBody && options?.body) {
-      entry.body = this.truncateBody(options.body);
+    // Add redacted headers based on logging level
+    if (this.options.loggingLevel !== 'none' && this.options.loggingLevel !== 'minimal') {
+      if (options?.headers) {
+        entry.headers = this.redactHeaders(options.headers);
+      }
+      if (this.options.logResponseHeaders && options?.responseHeaders) {
+        entry.responseHeaders = this.redactHeaders(options.responseHeaders);
+      }
+    }
+
+    // Add truncated body if logging level is full
+    if (this.options.loggingLevel === 'full' && options?.body) {
+      let bodyStr = this.truncateBody(options.body);
+      bodyStr = this.scrubPii(bodyStr);
+      entry.body = bodyStr;
     }
 
     this.writeEntry(entry);
@@ -319,9 +531,22 @@ export class AuditLogger {
   private writeEntry(entry: AuditLogEntry): void {
     const line = JSON.stringify(entry);
 
-    // Write to file if configured
+    // Write to file if configured (legacy support)
     if (this.writeStream) {
       this.writeStream.write(line + '\n');
+    }
+
+    // Write to all configured destinations
+    for (const destination of this.options.destinations) {
+      try {
+        destination.write(line);
+      } catch (err) {
+        // Log destination errors but don't fail
+        this.options.logger?.error(
+          { error: err, destination: destination.name },
+          'Failed to write to log destination'
+        );
+      }
     }
 
     // Log to main logger if configured
@@ -333,14 +558,18 @@ export class AuditLogger {
       this.options.logger[logMethod](
         {
           requestId: entry.requestId,
+          traceId: entry.traceId,
           event: entry.eventType,
           decision: entry.decision,
           host: entry.request.host,
           path: entry.request.path,
+          method: entry.request.method,
+          statusCode: entry.response?.statusCode,
           rule: entry.matchResult?.matchedRule?.id,
           durationMs: entry.durationMs,
+          denialCode: entry.denialReason?.code,
         },
-        `${entry.decision.toUpperCase()}: ${entry.request.host}${entry.request.path ?? ''}`
+        `${entry.decision.toUpperCase()}: ${entry.request.method ?? 'CONNECT'} ${entry.request.host}${entry.request.path ?? ''} -> ${entry.response?.statusCode ?? 'N/A'}`
       );
     }
   }
@@ -349,14 +578,57 @@ export class AuditLogger {
    * Flush and close the audit log.
    */
   async close(): Promise<void> {
+    // Close legacy file stream
     if (this.writeStream) {
-      return new Promise((resolve, reject) => {
+      await new Promise<void>((resolve, reject) => {
         this.writeStream!.end((err: Error | null) => {
           if (err) reject(err);
           else resolve();
         });
       });
     }
+
+    // Close all destinations
+    for (const destination of this.options.destinations) {
+      try {
+        await destination.close();
+      } catch (err) {
+        this.options.logger?.error(
+          { error: err, destination: destination.name },
+          'Failed to close log destination'
+        );
+      }
+    }
+  }
+
+  /**
+   * Add a log destination.
+   */
+  addDestination(destination: LogDestination): void {
+    this.options.destinations.push(destination);
+  }
+
+  /**
+   * Get the current logging level.
+   */
+  getLoggingLevel(): LoggingLevel {
+    return this.options.loggingLevel;
+  }
+
+  /**
+   * Set the logging level.
+   */
+  setLoggingLevel(level: LoggingLevel): void {
+    this.options.loggingLevel = level;
+    this.options.logHeaders = level === 'headers' || level === 'full';
+    this.options.logBody = level === 'full';
+  }
+
+  /**
+   * Set the sampling rate.
+   */
+  setSamplingRate(rate: number): void {
+    this.options.samplingRate = Math.max(0, Math.min(1, rate));
   }
 }
 
