@@ -6,6 +6,9 @@
  * @module admin/metrics
  */
 
+import type { PoolStats } from '../proxy/connection-pool.js';
+import type { LruCacheStats } from '../utils/lru-cache.js';
+
 /**
  * Metrics data for a single rule.
  */
@@ -16,6 +19,59 @@ export interface RuleMetrics {
   denied: number;
   /** Number of requests rate limited */
   rateLimited: number;
+}
+
+/**
+ * Connection pool metrics.
+ */
+export interface ConnectionPoolMetrics {
+  /** HTTP socket statistics */
+  http: {
+    active: number;
+    pending: number;
+    created: number;
+    reused: number;
+    reuseRate: number;
+  };
+  /** HTTPS socket statistics */
+  https: {
+    active: number;
+    pending: number;
+    created: number;
+    reused: number;
+    reuseRate: number;
+  };
+}
+
+/**
+ * Cache metrics.
+ */
+export interface CacheMetrics {
+  /** Certificate cache stats */
+  certificates: LruCacheStats;
+  /** Domain trie stats */
+  domainTrie: {
+    ruleCount: number;
+    exactDomains: number;
+    nodeCount: number;
+    maxDepth: number;
+  };
+}
+
+/**
+ * Rate limiter metrics.
+ */
+export interface RateLimiterMetrics {
+  /** Total requests checked */
+  totalRequests: number;
+  /** Requests allowed through */
+  totalAllowed: number;
+  /** Requests rejected (rate limited) */
+  totalRejected: number;
+  /** Rejection rate (0-1) */
+  rejectionRate: number;
+  /** Number of registered rule-specific limiters */
+  registeredRules: number;
 }
 
 /**
@@ -38,8 +94,28 @@ export interface ProxyMetrics {
   rulesCount: number;
   /** Metrics broken down by rule */
   byRule: Record<string, RuleMetrics>;
+  /** Connection pool statistics */
+  connectionPool?: ConnectionPoolMetrics;
+  /** Cache statistics */
+  cache?: CacheMetrics;
+  /** Rate limiter statistics */
+  rateLimiter?: RateLimiterMetrics;
   /** Timestamp when metrics were collected */
   timestamp: string;
+}
+
+/**
+ * Metrics source providers for external components.
+ */
+export interface MetricsSources {
+  /** Connection pool stats provider */
+  connectionPool?: () => PoolStats;
+  /** Certificate cache stats provider */
+  certificateCache?: () => LruCacheStats;
+  /** Domain trie stats provider */
+  domainTrie?: () => { ruleCount: number; exactDomains: number; nodeCount: number; maxDepth: number };
+  /** Rate limiter stats provider */
+  rateLimiter?: () => { totalRequests: number; totalAllowed: number; totalRejected: number; rejectionRate: number; registeredRules: number };
 }
 
 /**
@@ -55,6 +131,12 @@ export interface ProxyMetrics {
  * // Track a request
  * metrics.recordRequest('allowed', 'openai-api');
  *
+ * // Register external metrics sources
+ * metrics.registerSources({
+ *   connectionPool: () => pool.getStats(),
+ *   certificateCache: () => certManager.getCacheStats(),
+ * });
+ *
  * // Get current metrics
  * const snapshot = metrics.getMetrics(config.allowlist.rules.length);
  * console.log(`Total requests: ${snapshot.requestsTotal}`);
@@ -68,9 +150,19 @@ export class MetricsCollector {
   private activeConnections = 0;
   private readonly byRule: Map<string, RuleMetrics> = new Map();
   private readonly startTime: number;
+  private sources: MetricsSources = {};
 
   constructor() {
     this.startTime = Date.now();
+  }
+
+  /**
+   * Register external metrics sources.
+   *
+   * @param sources - Object containing stat provider functions
+   */
+  registerSources(sources: MetricsSources): void {
+    this.sources = { ...this.sources, ...sources };
   }
 
   /**
@@ -146,7 +238,7 @@ export class MetricsCollector {
       byRule[ruleId] = { ...metrics };
     }
 
-    return {
+    const result: ProxyMetrics = {
       requestsTotal: this.requestsTotal,
       requestsAllowed: this.requestsAllowed,
       requestsDenied: this.requestsDenied,
@@ -157,6 +249,55 @@ export class MetricsCollector {
       byRule,
       timestamp: new Date().toISOString(),
     };
+
+    // Collect connection pool metrics
+    if (this.sources.connectionPool) {
+      const poolStats = this.sources.connectionPool();
+      result.connectionPool = {
+        http: {
+          active: poolStats.http.activeSockets,
+          pending: poolStats.http.pendingRequests,
+          created: poolStats.http.socketsCreated,
+          reused: poolStats.http.socketsReused,
+          reuseRate: poolStats.http.reuseRate,
+        },
+        https: {
+          active: poolStats.https.activeSockets,
+          pending: poolStats.https.pendingRequests,
+          created: poolStats.https.socketsCreated,
+          reused: poolStats.https.socketsReused,
+          reuseRate: poolStats.https.reuseRate,
+        },
+      };
+    }
+
+    // Collect cache metrics
+    if (this.sources.certificateCache || this.sources.domainTrie) {
+      result.cache = {
+        certificates: this.sources.certificateCache?.() ?? {
+          size: 0,
+          maxSize: 0,
+          hits: 0,
+          misses: 0,
+          hitRate: 0,
+          evictions: 0,
+          expirations: 0,
+        },
+        domainTrie: this.sources.domainTrie?.() ?? {
+          ruleCount: 0,
+          exactDomains: 0,
+          nodeCount: 0,
+          maxDepth: 0,
+        },
+      };
+    }
+
+    // Collect rate limiter metrics
+    if (this.sources.rateLimiter) {
+      result.rateLimiter = this.sources.rateLimiter();
+    }
+
+    return result;
   }
 
   /**

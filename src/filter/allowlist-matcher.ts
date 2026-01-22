@@ -16,6 +16,7 @@ import type {
 } from '../types/allowlist.js';
 import { DomainMatcher } from './domain-matcher.js';
 import { IpMatcher } from './ip-matcher.js';
+import { DomainTrie, createDomainTrie } from './domain-trie.js';
 
 /**
  * Allowlist matcher that determines whether requests are permitted.
@@ -49,6 +50,10 @@ export class AllowlistMatcher {
   private readonly pathMatchers: Map<string, picomatch.Matcher>;
   private readonly clientIpMatchers: Map<string, IpMatcher>;
   private readonly excludeIpMatchers: Map<string, IpMatcher>;
+  /** Domain trie for fast domain lookups */
+  private domainTrie: DomainTrie;
+  /** Cache of rule IDs indexed by domain for quick access */
+  private readonly rulesByDomain: Map<string, AllowlistRule[]>;
 
   /**
    * Creates a new AllowlistMatcher.
@@ -61,6 +66,8 @@ export class AllowlistMatcher {
     this.pathMatchers = new Map();
     this.clientIpMatchers = new Map();
     this.excludeIpMatchers = new Map();
+    this.rulesByDomain = new Map();
+    this.domainTrie = new DomainTrie();
     this.initializeMatchers();
   }
 
@@ -69,10 +76,13 @@ export class AllowlistMatcher {
    * Called during construction and when configuration is reloaded.
    */
   private initializeMatchers(): void {
+    // Build domain trie for fast lookups
+    this.domainTrie = createDomainTrie(this.config.rules);
+
     for (const rule of this.config.rules) {
       if (rule.enabled === false) continue;
 
-      // Create domain matcher
+      // Create domain matcher (keep for backward compatibility and edge cases)
       this.domainMatchers.set(rule.id, new DomainMatcher(rule.domain));
 
       // Create path matchers if paths are specified
@@ -122,9 +132,30 @@ export class AllowlistMatcher {
    * ```
    */
   match(request: RequestInfo): MatchResult {
+    // Use domain trie for fast candidate lookup
+    const candidateRules = this.domainTrie.findMatchingRules(request.host);
+
+    // If we have candidates from the trie, check them first
+    if (candidateRules.length > 0) {
+      for (const rule of candidateRules) {
+        if (rule.enabled === false) continue;
+        if (this.matchesRuleDetails(request, rule)) {
+          return {
+            allowed: true,
+            matchedRule: rule,
+            reason: `Matched rule: ${rule.id}`,
+          };
+        }
+      }
+    }
+
+    // Fallback: Check all enabled rules (for complex patterns not in trie)
     const enabledRules = this.config.rules.filter((r) => r.enabled !== false);
 
     for (const rule of enabledRules) {
+      // Skip rules we already checked via trie
+      if (candidateRules.includes(rule)) continue;
+
       if (this.matchesRule(request, rule)) {
         return {
           allowed: true,
@@ -142,6 +173,46 @@ export class AllowlistMatcher {
         ? 'No rule matched, default action is allow'
         : 'No rule matched, default action is deny',
     };
+  }
+
+  /**
+   * Check rule details (path, method, IP) without re-checking domain.
+   * Used when domain match is already confirmed via trie.
+   */
+  private matchesRuleDetails(request: RequestInfo, rule: AllowlistRule): boolean {
+    // Check client IP (if specified)
+    if (request.sourceIp) {
+      // Check if IP is excluded
+      const excludeMatcher = this.excludeIpMatchers.get(rule.id);
+      if (excludeMatcher && excludeMatcher.matches(request.sourceIp)) {
+        return false;
+      }
+
+      // Check if IP is in allowed list (if specified)
+      const ipMatcher = this.clientIpMatchers.get(rule.id);
+      if (ipMatcher && !ipMatcher.matches(request.sourceIp)) {
+        return false;
+      }
+    }
+
+    // Check path (if in MITM mode with path info)
+    if (request.path && rule.paths && rule.paths.length > 0) {
+      const pathMatcher = this.pathMatchers.get(rule.id);
+      if (pathMatcher && !pathMatcher(request.path)) {
+        return false;
+      }
+    }
+
+    // Check method (if in MITM mode with method info)
+    if (request.method && rule.methods && rule.methods.length > 0) {
+      const normalizedMethod = request.method.toUpperCase();
+      const allowedMethods = rule.methods.map((m) => m.toUpperCase());
+      if (!allowedMethods.includes(normalizedMethod)) {
+        return false;
+      }
+    }
+
+    return true;
   }
 
   /**
@@ -270,7 +341,16 @@ export class AllowlistMatcher {
     this.pathMatchers.clear();
     this.clientIpMatchers.clear();
     this.excludeIpMatchers.clear();
+    this.rulesByDomain.clear();
+    this.domainTrie.clear();
     this.initializeMatchers();
+  }
+
+  /**
+   * Get domain trie statistics for monitoring.
+   */
+  getTrieStats() {
+    return this.domainTrie.getStats();
   }
 }
 

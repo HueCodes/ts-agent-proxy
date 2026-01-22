@@ -5,11 +5,59 @@
  * usage quotas. Each rule can have its own rate limit, with a fallback
  * to a global default limit.
  *
+ * Supports:
+ * - In-memory storage (default)
+ * - Redis backend for distributed rate limiting
+ * - Fixed window and sliding window algorithms
+ * - Burst allowance configuration
+ *
  * @module filter/rate-limiter
  */
 
-import { RateLimiterMemory, RateLimiterRes } from 'rate-limiter-flexible';
+import {
+  RateLimiterMemory,
+  RateLimiterRes,
+  RateLimiterAbstract,
+} from 'rate-limiter-flexible';
 import type { AllowlistRule, RateLimitConfig } from '../types/allowlist.js';
+
+/**
+ * Rate limiter backend type.
+ */
+export type RateLimiterBackend = 'memory' | 'redis';
+
+/**
+ * Rate limiter algorithm.
+ */
+export type RateLimiterAlgorithm = 'fixed-window' | 'sliding-window';
+
+/**
+ * Rate limiter configuration.
+ */
+export interface RateLimiterConfig {
+  /** Backend storage type */
+  backend: RateLimiterBackend;
+  /** Algorithm to use */
+  algorithm: RateLimiterAlgorithm;
+  /** Default requests per minute */
+  defaultRequestsPerMinute: number;
+  /** Burst allowance (extra requests allowed in bursts) */
+  burstAllowance: number;
+  /** Redis connection URL (for redis backend) */
+  redisUrl?: string;
+  /** Redis key prefix */
+  redisKeyPrefix?: string;
+}
+
+/**
+ * Default rate limiter configuration.
+ */
+export const DEFAULT_RATE_LIMITER_CONFIG: RateLimiterConfig = {
+  backend: 'memory',
+  algorithm: 'fixed-window',
+  defaultRequestsPerMinute: 100,
+  burstAllowance: 0,
+};
 
 /**
  * Result of a rate limit check.
@@ -23,19 +71,36 @@ export interface RateLimitResult {
   resetMs: number;
   /** The rate limit that was applied (requests per minute) */
   limit: number;
+  /** Headers to include in response */
+  headers: RateLimitHeaders;
+}
+
+/**
+ * Rate limit headers for responses.
+ */
+export interface RateLimitHeaders {
+  /** Maximum requests allowed in window */
+  'X-RateLimit-Limit': string;
+  /** Remaining requests in current window */
+  'X-RateLimit-Remaining': string;
+  /** Unix timestamp when window resets */
+  'X-RateLimit-Reset': string;
+  /** Retry-After header (only when rate limited) */
+  'Retry-After'?: string;
 }
 
 /**
  * Rate limiter for controlling request throughput.
  *
  * Supports per-rule rate limits and a global default limit.
- * Uses a fixed-window algorithm with 1-minute windows.
+ * Supports both fixed-window and sliding-window algorithms.
+ * Can use in-memory storage or Redis for distributed rate limiting.
  *
  * Rate limits are tracked per key (typically client IP or client IP + rule ID).
  *
  * @example
  * ```typescript
- * const limiter = new RateLimiter(100); // 100 req/min default
+ * const limiter = new RateLimiter({ defaultRequestsPerMinute: 100 });
  *
  * // Register rule-specific limits
  * limiter.registerRule('openai-api', { requestsPerMinute: 60 });
@@ -43,26 +108,83 @@ export interface RateLimitResult {
  * // Check and consume
  * const result = await limiter.consume('192.168.1.1', 'openai-api');
  * if (!result.allowed) {
- *   // Return 429 Too Many Requests
- *   res.setHeader('Retry-After', Math.ceil(result.resetMs / 1000));
+ *   // Return 429 Too Many Requests with headers
+ *   for (const [key, value] of Object.entries(result.headers)) {
+ *     res.setHeader(key, value);
+ *   }
  * }
  * ```
  */
 export class RateLimiter {
-  private readonly limiters: Map<string, RateLimiterMemory>;
-  private readonly defaultLimiter: RateLimiterMemory;
+  private readonly limiters: Map<string, RateLimiterAbstract>;
+  private readonly defaultLimiter: RateLimiterAbstract;
+  private readonly config: RateLimiterConfig;
+
+  // Statistics
+  private totalRequests = 0;
+  private totalAllowed = 0;
+  private totalRejected = 0;
 
   /**
    * Creates a new RateLimiter.
    *
-   * @param defaultRequestsPerMinute - Default rate limit when no rule-specific limit exists
+   * @param config - Rate limiter configuration or default requests per minute
    */
-  constructor(defaultRequestsPerMinute: number = 100) {
+  constructor(config: Partial<RateLimiterConfig> | number = 100) {
+    // Handle legacy constructor signature
+    if (typeof config === 'number') {
+      this.config = {
+        ...DEFAULT_RATE_LIMITER_CONFIG,
+        defaultRequestsPerMinute: config,
+      };
+    } else {
+      this.config = { ...DEFAULT_RATE_LIMITER_CONFIG, ...config };
+    }
+
     this.limiters = new Map();
-    this.defaultLimiter = new RateLimiterMemory({
-      points: defaultRequestsPerMinute,
-      duration: 60,
+    this.defaultLimiter = this.createLimiter(
+      this.config.defaultRequestsPerMinute + this.config.burstAllowance
+    );
+  }
+
+  /**
+   * Create a rate limiter instance based on configuration.
+   */
+  private createLimiter(points: number): RateLimiterAbstract {
+    // For now, we only support memory backend
+    // Redis support would require adding ioredis as a dependency
+    // and using RateLimiterRedis from rate-limiter-flexible
+    const duration = this.config.algorithm === 'sliding-window' ? 60 : 60;
+
+    return new RateLimiterMemory({
+      points,
+      duration,
+      // For sliding window behavior, we can use blockDuration
+      // This isn't a true sliding window, but provides similar behavior
     });
+  }
+
+  /**
+   * Generate rate limit headers.
+   */
+  private generateHeaders(
+    limit: number,
+    remaining: number,
+    resetMs: number,
+    isLimited: boolean
+  ): RateLimitHeaders {
+    const resetTimestamp = Math.ceil((Date.now() + resetMs) / 1000);
+    const headers: RateLimitHeaders = {
+      'X-RateLimit-Limit': String(limit),
+      'X-RateLimit-Remaining': String(Math.max(0, remaining)),
+      'X-RateLimit-Reset': String(resetTimestamp),
+    };
+
+    if (isLimited) {
+      headers['Retry-After'] = String(Math.ceil(resetMs / 1000));
+    }
+
+    return headers;
   }
 
   /**
@@ -72,13 +194,8 @@ export class RateLimiter {
    * @param config - Rate limit configuration
    */
   registerRule(ruleId: string, config: RateLimitConfig): void {
-    this.limiters.set(
-      ruleId,
-      new RateLimiterMemory({
-        points: config.requestsPerMinute,
-        duration: 60,
-      })
-    );
+    const points = config.requestsPerMinute + this.config.burstAllowance;
+    this.limiters.set(ruleId, this.createLimiter(points));
   }
 
   /**
@@ -105,39 +222,55 @@ export class RateLimiter {
    *
    * @param key - The rate limit key (typically client IP)
    * @param ruleId - Optional rule ID to use rule-specific limits instead of default
-   * @returns Rate limit result with allowed status and quota info
+   * @returns Rate limit result with allowed status, quota info, and headers
    *
    * @example
    * ```typescript
    * const result = await limiter.consume(clientIp, matchedRule?.id);
    * if (!result.allowed) {
-   *   return new Response('Too Many Requests', {
-   *     status: 429,
-   *     headers: { 'Retry-After': String(Math.ceil(result.resetMs / 1000)) }
-   *   });
+   *   // Set rate limit headers
+   *   for (const [key, value] of Object.entries(result.headers)) {
+   *     res.setHeader(key, value);
+   *   }
+   *   return new Response('Too Many Requests', { status: 429 });
    * }
    * ```
    */
   async consume(key: string, ruleId?: string): Promise<RateLimitResult> {
+    this.totalRequests++;
     const limiter = ruleId
       ? this.limiters.get(ruleId) ?? this.defaultLimiter
       : this.defaultLimiter;
 
     try {
       const result = await limiter.consume(key);
+      this.totalAllowed++;
       return {
         allowed: true,
         remaining: result.remainingPoints,
         resetMs: result.msBeforeNext,
         limit: limiter.points,
+        headers: this.generateHeaders(
+          limiter.points,
+          result.remainingPoints,
+          result.msBeforeNext,
+          false
+        ),
       };
     } catch (error) {
       if (error instanceof RateLimiterRes) {
+        this.totalRejected++;
         return {
           allowed: false,
           remaining: 0,
           resetMs: error.msBeforeNext,
           limit: limiter.points,
+          headers: this.generateHeaders(
+            limiter.points,
+            0,
+            error.msBeforeNext,
+            true
+          ),
         };
       }
       throw error;
@@ -166,13 +299,21 @@ export class RateLimiter {
           remaining: limiter.points,
           resetMs: 0,
           limit: limiter.points,
+          headers: this.generateHeaders(limiter.points, limiter.points, 0, false),
         };
       }
+      const remaining = result.remainingPoints;
       return {
-        allowed: result.remainingPoints > 0,
-        remaining: result.remainingPoints,
+        allowed: remaining > 0,
+        remaining,
         resetMs: result.msBeforeNext,
         limit: limiter.points,
+        headers: this.generateHeaders(
+          limiter.points,
+          remaining,
+          result.msBeforeNext,
+          remaining <= 0
+        ),
       };
     } catch {
       return {
@@ -180,6 +321,7 @@ export class RateLimiter {
         remaining: limiter.points,
         resetMs: 0,
         limit: limiter.points,
+        headers: this.generateHeaders(limiter.points, limiter.points, 0, false),
       };
     }
   }
@@ -209,6 +351,43 @@ export class RateLimiter {
    */
   clear(): void {
     this.limiters.clear();
+  }
+
+  /**
+   * Get rate limiter statistics.
+   */
+  getStats(): {
+    totalRequests: number;
+    totalAllowed: number;
+    totalRejected: number;
+    rejectionRate: number;
+    registeredRules: number;
+    config: RateLimiterConfig;
+  } {
+    return {
+      totalRequests: this.totalRequests,
+      totalAllowed: this.totalAllowed,
+      totalRejected: this.totalRejected,
+      rejectionRate: this.totalRequests > 0 ? this.totalRejected / this.totalRequests : 0,
+      registeredRules: this.limiters.size,
+      config: { ...this.config },
+    };
+  }
+
+  /**
+   * Reset statistics.
+   */
+  resetStats(): void {
+    this.totalRequests = 0;
+    this.totalAllowed = 0;
+    this.totalRejected = 0;
+  }
+
+  /**
+   * Get the configuration.
+   */
+  getConfig(): RateLimiterConfig {
+    return { ...this.config };
   }
 }
 

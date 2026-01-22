@@ -21,6 +21,7 @@ import { createConnectHandler, type ConnectHandler } from './proxy/connect-handl
 import { createForwardProxy, type ForwardProxy } from './proxy/forward-proxy.js';
 import { createCertManager, type CertManager } from './proxy/mitm/cert-manager.js';
 import { createMitmInterceptor, type MitmInterceptor } from './proxy/mitm/interceptor.js';
+import { createWebSocketHandler, WebSocketHandler, type WebSocketHandlerConfig } from './proxy/websocket-handler.js';
 import { createMetricsCollector, type MetricsCollector } from './admin/metrics.js';
 import { createAdminServer, type AdminServer } from './admin/admin-server.js';
 
@@ -53,6 +54,7 @@ export class ProxyServer {
   private readonly forwardProxy: ForwardProxy;
   private readonly certManager?: CertManager;
   private readonly mitmInterceptor?: MitmInterceptor;
+  private readonly webSocketHandler: WebSocketHandler;
   private readonly metrics: MetricsCollector;
   private readonly adminServer?: AdminServer;
   private server?: http.Server;
@@ -103,6 +105,9 @@ export class ProxyServer {
       });
     }
 
+    // Initialize WebSocket handler
+    this.webSocketHandler = createWebSocketHandler(handlerOptions);
+
     // Initialize metrics collector
     this.metrics = createMetricsCollector();
 
@@ -146,6 +151,10 @@ export class ProxyServer {
 
     this.server.on('connect', (req, socket: Duplex, head) => {
       this.handleConnect(req, socket as Socket, head);
+    });
+
+    this.server.on('upgrade', (req, socket: Duplex, head) => {
+      this.handleUpgrade(req, socket as Socket, head);
     });
 
     this.server.on('error', (error) => {
@@ -230,6 +239,23 @@ export class ProxyServer {
   }
 
   /**
+   * Handle WebSocket upgrade requests.
+   */
+  private handleUpgrade(req: IncomingMessage, socket: Socket, head: Buffer): void {
+    if (!WebSocketHandler.isWebSocketUpgrade(req)) {
+      // Not a WebSocket upgrade, reject
+      socket.write('HTTP/1.1 400 Bad Request\r\n\r\n');
+      socket.destroy();
+      return;
+    }
+
+    this.webSocketHandler.handleUpgrade(req, socket, head).catch((error) => {
+      this.logger.error({ error }, 'WebSocket handling error');
+      socket.destroy();
+    });
+  }
+
+  /**
    * Reload the allowlist configuration.
    */
   reloadAllowlist(config: AllowlistConfig): void {
@@ -281,6 +307,15 @@ export class ProxyServer {
    */
   getMetricsCollector(): MetricsCollector {
     return this.metrics;
+  }
+
+  /**
+   * Get WebSocket statistics.
+   *
+   * @returns WebSocket connection and transfer stats
+   */
+  getWebSocketStats() {
+    return this.webSocketHandler.getStats();
   }
 }
 

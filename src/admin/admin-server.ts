@@ -10,6 +10,9 @@ import http from 'node:http';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { Logger } from '../logging/logger.js';
 import type { MetricsCollector, ProxyMetrics } from './metrics.js';
+import type { PrometheusMetrics } from './prometheus-metrics.js';
+import type { AdminAuthConfig } from '../types/config.js';
+import { AdminAuth, DEFAULT_ADMIN_AUTH_CONFIG } from './auth.js';
 
 /**
  * Configuration for the admin server.
@@ -23,10 +26,14 @@ export interface AdminServerConfig {
   logger: Logger;
   /** Metrics collector */
   metrics: MetricsCollector;
+  /** Prometheus metrics collector (optional) */
+  prometheusMetrics?: PrometheusMetrics;
   /** Function to get current rules count */
   getRulesCount: () => number;
   /** Function to check if proxy is ready */
   isReady: () => boolean;
+  /** Authentication configuration */
+  auth?: AdminAuthConfig;
 }
 
 /**
@@ -62,6 +69,7 @@ export interface HealthResponse {
  */
 export class AdminServer {
   private readonly config: AdminServerConfig;
+  private readonly auth: AdminAuth;
   private server?: http.Server;
   private startTime: number = Date.now();
 
@@ -72,6 +80,10 @@ export class AdminServer {
    */
   constructor(config: AdminServerConfig) {
     this.config = config;
+    this.auth = new AdminAuth(
+      config.auth ?? DEFAULT_ADMIN_AUTH_CONFIG,
+      config.logger
+    );
   }
 
   /**
@@ -83,7 +95,13 @@ export class AdminServer {
     this.startTime = Date.now();
 
     this.server = http.createServer((req, res) => {
-      this.handleRequest(req, res);
+      this.handleRequest(req, res).catch((error) => {
+        this.config.logger.error({ error }, 'Unhandled error in request handler');
+        if (!res.headersSent) {
+          res.writeHead(500);
+          res.end(JSON.stringify({ error: 'Internal server error' }));
+        }
+      });
     });
 
     this.server.on('error', (error) => {
@@ -125,7 +143,7 @@ export class AdminServer {
   /**
    * Handle incoming HTTP request.
    */
-  private handleRequest(req: IncomingMessage, res: ServerResponse): void {
+  private async handleRequest(req: IncomingMessage, res: ServerResponse): Promise<void> {
     const url = new URL(req.url ?? '/', `http://${req.headers.host}`);
 
     // Set common headers
@@ -133,6 +151,20 @@ export class AdminServer {
     res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
 
     try {
+      // Authenticate request (skips unauthenticated endpoints like /health, /ready)
+      const authResult = await this.auth.authenticate(req);
+
+      if (!authResult.authenticated) {
+        if (authResult.reason === 'Rate limit exceeded') {
+          this.auth.sendRateLimited(res);
+        } else if (authResult.reason === 'IP not allowed') {
+          this.auth.sendForbidden(res, authResult.reason);
+        } else {
+          this.auth.sendUnauthorized(res, authResult.reason ?? 'Unauthorized');
+        }
+        return;
+      }
+
       switch (url.pathname) {
         case '/health':
           this.handleHealth(req, res);
@@ -142,6 +174,9 @@ export class AdminServer {
           break;
         case '/metrics':
           this.handleMetrics(req, res);
+          break;
+        case '/metrics/prometheus':
+          await this.handlePrometheusMetrics(req, res);
           break;
         default:
           this.handleNotFound(req, res);
@@ -195,13 +230,41 @@ export class AdminServer {
   }
 
   /**
+   * Handle GET /metrics/prometheus - Prometheus format metrics endpoint.
+   */
+  private async handlePrometheusMetrics(
+    _req: IncomingMessage,
+    res: ServerResponse
+  ): Promise<void> {
+    if (!this.config.prometheusMetrics) {
+      res.writeHead(404);
+      res.end(JSON.stringify({ error: 'Prometheus metrics not configured' }));
+      return;
+    }
+
+    try {
+      // Update gauge metrics before exporting
+      this.config.prometheusMetrics.setRulesCount(this.config.getRulesCount());
+
+      const metricsText = await this.config.prometheusMetrics.getMetrics();
+      res.setHeader('Content-Type', this.config.prometheusMetrics.getContentType());
+      res.writeHead(200);
+      res.end(metricsText);
+    } catch (error) {
+      this.config.logger.error({ error }, 'Error generating Prometheus metrics');
+      res.writeHead(500);
+      res.end(JSON.stringify({ error: 'Failed to generate metrics' }));
+    }
+  }
+
+  /**
    * Handle 404 Not Found.
    */
   private handleNotFound(_req: IncomingMessage, res: ServerResponse): void {
     res.writeHead(404);
     res.end(JSON.stringify({
       error: 'Not found',
-      endpoints: ['/health', '/ready', '/metrics'],
+      endpoints: ['/health', '/ready', '/metrics', '/metrics/prometheus'],
     }));
   }
 

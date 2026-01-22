@@ -14,12 +14,16 @@ import type { AllowlistMatcher } from '../filter/allowlist-matcher.js';
 import type { RateLimiter } from '../filter/rate-limiter.js';
 import type { AuditLogger } from '../logging/audit-logger.js';
 import type { RequestInfo } from '../types/allowlist.js';
+import type { TimeoutsConfig } from '../types/config.js';
+import { DEFAULT_TIMEOUTS } from '../types/config.js';
+import { sendSocketError, TimeoutError } from './size-limiter.js';
 
 export interface ConnectHandlerOptions {
   allowlistMatcher: AllowlistMatcher;
   rateLimiter: RateLimiter;
   auditLogger: AuditLogger;
   logger: Logger;
+  timeouts?: TimeoutsConfig;
 }
 
 export interface ConnectResult {
@@ -30,9 +34,11 @@ export interface ConnectResult {
 
 export class ConnectHandler {
   private readonly options: ConnectHandlerOptions;
+  private readonly timeouts: TimeoutsConfig;
 
   constructor(options: ConnectHandlerOptions) {
     this.options = options;
+    this.timeouts = options.timeouts ?? DEFAULT_TIMEOUTS;
   }
 
   /**
@@ -90,7 +96,12 @@ export class ConnectHandler {
       await this.createTunnel(clientSocket, head, host, port, requestInfo, startTime);
     } catch (error) {
       this.options.auditLogger.logError(requestInfo, error as Error);
-      this.sendError(clientSocket, 'Failed to establish connection');
+
+      if (error instanceof TimeoutError) {
+        sendSocketError(clientSocket, 504, 'Gateway Timeout', 'Connection to upstream server timed out');
+      } else {
+        this.sendError(clientSocket, 'Failed to establish connection');
+      }
     }
   }
 
@@ -126,7 +137,54 @@ export class ConnectHandler {
     startTime: number
   ): Promise<void> {
     return new Promise((resolve, reject) => {
+      let connectTimeoutId: NodeJS.Timeout | undefined;
+      let idleTimeoutId: NodeJS.Timeout | undefined;
+      let resolved = false;
+
+      const cleanup = () => {
+        if (connectTimeoutId) clearTimeout(connectTimeoutId);
+        if (idleTimeoutId) clearTimeout(idleTimeoutId);
+      };
+
+      const safeReject = (error: Error) => {
+        if (!resolved) {
+          resolved = true;
+          cleanup();
+          reject(error);
+        }
+      };
+
+      const safeResolve = () => {
+        if (!resolved) {
+          resolved = true;
+          cleanup();
+          resolve();
+        }
+      };
+
+      const resetIdleTimeout = () => {
+        if (idleTimeoutId) clearTimeout(idleTimeoutId);
+        idleTimeoutId = setTimeout(() => {
+          this.options.logger.debug({ host, port }, 'Tunnel idle timeout');
+          clientSocket.destroy();
+          serverSocket.destroy();
+        }, this.timeouts.idleTimeout);
+      };
+
+      // Set connect timeout
+      connectTimeoutId = setTimeout(() => {
+        this.options.logger.warn({ host, port, timeout: this.timeouts.connectTimeout }, 'Tunnel connect timeout');
+        safeReject(new TimeoutError('Connect timeout', this.timeouts.connectTimeout));
+        clientSocket.destroy();
+      }, this.timeouts.connectTimeout);
+
       const serverSocket = net.connect(port, host, () => {
+        // Clear connect timeout
+        if (connectTimeoutId) {
+          clearTimeout(connectTimeoutId);
+          connectTimeoutId = undefined;
+        }
+
         this.options.logger.debug({ host, port }, 'Tunnel established');
 
         // Send success response
@@ -148,26 +206,36 @@ export class ConnectHandler {
         clientSocket.pipe(serverSocket);
         serverSocket.pipe(clientSocket);
 
-        resolve();
+        // Start idle timeout
+        resetIdleTimeout();
+
+        // Reset idle timeout on data transfer
+        clientSocket.on('data', resetIdleTimeout);
+        serverSocket.on('data', resetIdleTimeout);
+
+        safeResolve();
       });
 
       serverSocket.on('error', (err) => {
         this.options.logger.error({ host, port, error: err.message }, 'Tunnel connection failed');
         clientSocket.destroy();
-        reject(err);
+        safeReject(err);
       });
 
       clientSocket.on('error', (err) => {
         this.options.logger.error({ error: err.message }, 'Client socket error');
         serverSocket.destroy();
+        cleanup();
       });
 
       clientSocket.on('close', () => {
         serverSocket.destroy();
+        cleanup();
       });
 
       serverSocket.on('close', () => {
         clientSocket.destroy();
+        cleanup();
       });
     });
   }

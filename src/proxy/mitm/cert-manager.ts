@@ -5,11 +5,32 @@
 import forge from 'node-forge';
 import fs from 'node:fs';
 import path from 'node:path';
+import { LruCache, createLruCache, type LruCacheStats } from '../../utils/lru-cache.js';
 
 export interface CertificateInfo {
   cert: string;
   key: string;
 }
+
+/**
+ * Certificate cache configuration.
+ */
+export interface CertCacheConfig {
+  /** Maximum number of cached certificates (default: 1000) */
+  maxSize: number;
+  /** TTL for cached certificates in ms (default: 24 hours) */
+  ttlMs: number;
+  /** Domains to pre-warm cache with */
+  prewarmDomains?: string[];
+}
+
+/**
+ * Default certificate cache configuration.
+ */
+export const DEFAULT_CERT_CACHE_CONFIG: CertCacheConfig = {
+  maxSize: 1000,
+  ttlMs: 24 * 60 * 60 * 1000, // 24 hours
+};
 
 export interface CertManagerOptions {
   /** Path to CA certificate */
@@ -20,16 +41,24 @@ export interface CertManagerOptions {
   autoGenerate?: boolean;
   /** Directory to cache generated certificates */
   cacheDir?: string;
+  /** Certificate cache configuration */
+  cacheConfig?: Partial<CertCacheConfig>;
 }
 
 export class CertManager {
   private caCert: forge.pki.Certificate | null = null;
   private caKey: forge.pki.rsa.PrivateKey | null = null;
-  private readonly certCache: Map<string, CertificateInfo> = new Map();
+  private readonly certCache: LruCache<string, CertificateInfo>;
   private readonly options: CertManagerOptions;
+  private readonly cacheConfig: CertCacheConfig;
 
   constructor(options: CertManagerOptions = {}) {
     this.options = options;
+    this.cacheConfig = { ...DEFAULT_CERT_CACHE_CONFIG, ...options.cacheConfig };
+    this.certCache = createLruCache<string, CertificateInfo>({
+      maxSize: this.cacheConfig.maxSize,
+      ttlMs: this.cacheConfig.ttlMs,
+    });
   }
 
   /**
@@ -42,6 +71,21 @@ export class CertManager {
     } else if (this.options.autoGenerate) {
       // Generate new CA
       this.generateCa();
+    }
+
+    // Pre-warm cache with specified domains
+    if (this.cacheConfig.prewarmDomains && this.cacheConfig.prewarmDomains.length > 0) {
+      this.prewarmCache(this.cacheConfig.prewarmDomains);
+    }
+  }
+
+  /**
+   * Pre-warm the certificate cache with specified domains.
+   */
+  prewarmCache(domains: string[]): void {
+    for (const domain of domains) {
+      // generateCertForDomain will automatically cache
+      this.generateCertForDomain(domain);
     }
   }
 
@@ -121,7 +165,7 @@ export class CertManager {
    * Generate a certificate for a specific domain.
    */
   generateCertForDomain(domain: string): CertificateInfo {
-    // Check cache first
+    // Check cache first (LRU cache handles TTL)
     const cached = this.certCache.get(domain);
     if (cached) {
       return cached;
@@ -169,10 +213,24 @@ export class CertManager {
       key: forge.pki.privateKeyToPem(keys.privateKey),
     };
 
-    // Cache the certificate
+    // Cache the certificate (LRU cache handles eviction)
     this.certCache.set(domain, certInfo);
 
     return certInfo;
+  }
+
+  /**
+   * Get certificate cache statistics.
+   */
+  getCacheStats(): LruCacheStats {
+    return this.certCache.getStats();
+  }
+
+  /**
+   * Prune expired certificates from cache.
+   */
+  pruneCache(): number {
+    return this.certCache.prune();
   }
 
   /**
@@ -180,6 +238,13 @@ export class CertManager {
    */
   clearCache(): void {
     this.certCache.clear();
+  }
+
+  /**
+   * Get the number of cached certificates.
+   */
+  getCacheSize(): number {
+    return this.certCache.size;
   }
 
   /**
