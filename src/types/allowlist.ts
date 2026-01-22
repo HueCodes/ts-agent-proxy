@@ -19,6 +19,66 @@ export interface HeaderTransform {
   rename?: Record<string, string>;
 }
 
+/**
+ * Logging level for a rule.
+ */
+export type RuleLoggingLevel = 'none' | 'minimal' | 'headers' | 'full';
+
+/**
+ * Per-rule logging configuration.
+ */
+export interface RuleLoggingConfig {
+  /** Logging level for this rule */
+  level: RuleLoggingLevel;
+  /** Sampling rate (0.0 to 1.0, default: 1.0) */
+  samplingRate?: number;
+  /** Log only these status codes */
+  statusCodes?: number[];
+  /** Log request body for specific content types */
+  bodyContentTypes?: string[];
+  /** Include response headers */
+  includeResponseHeaders?: boolean;
+}
+
+/**
+ * gRPC-specific rule configuration.
+ */
+export interface GrpcRuleConfig {
+  /**
+   * Allowed gRPC services (e.g., ["myapp.UserService", "myapp.OrderService"]).
+   * Supports wildcards (e.g., "myapp.*" matches all services in myapp package).
+   */
+  services?: string[];
+  /**
+   * Allowed gRPC methods in full format (e.g., ["myapp.UserService/GetUser"]).
+   * More specific than services - use for fine-grained control.
+   */
+  methods?: string[];
+  /**
+   * Allow gRPC server reflection API (grpc.reflection.v1alpha.ServerReflection).
+   * Default: false for security.
+   */
+  allowReflection?: boolean;
+  /**
+   * Allow gRPC health check service (grpc.health.v1.Health).
+   * Default: true.
+   */
+  allowHealthCheck?: boolean;
+  /**
+   * Maximum message size in bytes for this rule.
+   * Overrides global setting.
+   */
+  maxMessageSize?: number;
+  /**
+   * Maximum concurrent streams per connection for this rule.
+   */
+  maxConcurrentStreams?: number;
+  /**
+   * Separate rate limit for streaming RPCs (requests per minute).
+   */
+  streamingRateLimit?: number;
+}
+
 export interface AllowlistRule {
   /** Unique identifier for the rule */
   id: string;
@@ -42,6 +102,10 @@ export interface AllowlistRule {
   requestHeaders?: HeaderTransform;
   /** Response header transformations */
   responseHeaders?: HeaderTransform;
+  /** Per-rule logging configuration */
+  logging?: RuleLoggingConfig;
+  /** gRPC-specific configuration */
+  grpc?: GrpcRuleConfig;
 }
 
 export type AllowlistMode = 'strict' | 'permissive';
@@ -78,4 +142,12 @@ export interface RequestInfo {
   headers?: Record<string, string>;
   /** Source IP address */
   sourceIp?: string;
+  /** gRPC service name (for gRPC requests) */
+  grpcService?: string;
+  /** gRPC method name (for gRPC requests) */
+  grpcMethod?: string;
+  /** Whether this is a gRPC request */
+  isGrpc?: boolean;
+  /** Whether this is a gRPC streaming request */
+  isGrpcStreaming?: boolean;
 }
