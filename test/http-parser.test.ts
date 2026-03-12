@@ -127,12 +127,7 @@ describe('HttpRequestParser', () => {
 
   describe('streaming/incremental parsing', () => {
     it('should handle data arriving in chunks', () => {
-      const parts = [
-        'GET /path',
-        ' HTTP/1.1\r\n',
-        'Host: example.com',
-        '\r\n\r\n',
-      ];
+      const parts = ['GET /path', ' HTTP/1.1\r\n', 'Host: example.com', '\r\n\r\n'];
 
       for (const part of parts) {
         parser.write(Buffer.from(part));
@@ -144,9 +139,7 @@ describe('HttpRequestParser', () => {
 
     it('should handle body arriving in chunks', () => {
       const body = 'This is a test body';
-      parser.write(
-        Buffer.from(`POST / HTTP/1.1\r\nContent-Length: ${body.length}\r\n\r\n`)
-      );
+      parser.write(Buffer.from(`POST / HTTP/1.1\r\nContent-Length: ${body.length}\r\n\r\n`));
       expect(parser.isComplete()).toBe(false);
 
       parser.write(Buffer.from('This is '));
@@ -200,7 +193,8 @@ describe('HttpRequestParser', () => {
         'Transfer-Encoding: chunked\r\n' +
         '\r\n' +
         '20\r\n' + // 32 bytes
-        'a'.repeat(32) + '\r\n';
+        'a'.repeat(32) +
+        '\r\n';
 
       expect(() => smallParser.write(Buffer.from(request))).toThrow(HttpParseError);
     });

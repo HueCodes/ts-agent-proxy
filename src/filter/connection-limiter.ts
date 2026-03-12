@@ -52,7 +52,7 @@ export class ConnectionLimiter {
     if (this.totalConnections >= maxTotalConnections) {
       this.options.logger.warn(
         { totalConnections: this.totalConnections, limit: maxTotalConnections },
-        'Total connection limit reached'
+        'Total connection limit reached',
       );
       return {
         allowed: false,
@@ -68,7 +68,7 @@ export class ConnectionLimiter {
     if (currentIpCount >= maxConcurrentConnectionsPerIp) {
       this.options.logger.warn(
         { ip, connections: currentIpCount, limit: maxConcurrentConnectionsPerIp },
-        'Per-IP connection limit reached'
+        'Per-IP connection limit reached',
       );
       return {
         allowed: false,
@@ -101,7 +101,7 @@ export class ConnectionLimiter {
 
     this.options.logger.debug(
       { ip, ipConnections: ipConnections.size, totalConnections: this.totalConnections },
-      'Connection tracked'
+      'Connection tracked',
     );
 
     // Return cleanup function
@@ -132,7 +132,7 @@ export class ConnectionLimiter {
 
         this.options.logger.debug(
           { ip, ipConnections: ipConnections.size, totalConnections: this.totalConnections },
-          'Connection untracked'
+          'Connection untracked',
         );
       }
     }

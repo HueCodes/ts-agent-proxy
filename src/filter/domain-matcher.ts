@@ -154,7 +154,7 @@ export class DomainMatcher {
  */
 export function createDomainMatcher(
   pattern: string,
-  options?: DomainMatcherOptions
+  options?: DomainMatcherOptions,
 ): DomainMatcher {
   return new DomainMatcher(pattern, options);
 }
@@ -182,9 +182,7 @@ export function createDomainMatcher(
 export function matchesDomain(
   domain: string,
   patterns: string[],
-  options?: DomainMatcherOptions
+  options?: DomainMatcherOptions,
 ): boolean {
-  return patterns.some((pattern) =>
-    new DomainMatcher(pattern, options).matches(domain)
-  );
+  return patterns.some((pattern) => new DomainMatcher(pattern, options).matches(domain));
 }

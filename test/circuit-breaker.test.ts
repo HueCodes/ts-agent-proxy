@@ -191,11 +191,7 @@ describe('CircuitBreaker', () => {
       breakerWithCallback.recordFailure(key, new Error('fail'));
       breakerWithCallback.recordFailure(key, new Error('fail'));
 
-      expect(onStateChange).toHaveBeenCalledWith(
-        key,
-        CircuitState.CLOSED,
-        CircuitState.OPEN
-      );
+      expect(onStateChange).toHaveBeenCalledWith(key, CircuitState.CLOSED, CircuitState.OPEN);
     });
 
     it('should call onFailure callback', () => {
@@ -323,7 +319,7 @@ describe('withCircuitBreaker', () => {
     breaker.recordFailure('test', new Error('fail'));
 
     await expect(
-      withCircuitBreaker(breaker, 'test', () => Promise.resolve('success'))
+      withCircuitBreaker(breaker, 'test', () => Promise.resolve('success')),
     ).rejects.toThrow(CircuitOpenError);
   });
 
@@ -331,9 +327,9 @@ describe('withCircuitBreaker', () => {
     const breaker = createCircuitBreaker();
     const error = new Error('test error');
 
-    await expect(
-      withCircuitBreaker(breaker, 'test', () => Promise.reject(error))
-    ).rejects.toThrow(error);
+    await expect(withCircuitBreaker(breaker, 'test', () => Promise.reject(error))).rejects.toThrow(
+      error,
+    );
 
     const stats = breaker.getCircuitStats('test');
     expect(stats!.totalFailures).toBe(1);

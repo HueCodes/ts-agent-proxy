@@ -155,7 +155,7 @@ export class BodyTransformer {
   async transform(
     body: Buffer,
     context: TransformContext,
-    direction: 'request' | 'response'
+    direction: 'request' | 'response',
   ): Promise<TransformResult> {
     const result: TransformResult = {
       body,
@@ -236,7 +236,7 @@ export class BodyTransformer {
    */
   private getApplicableRules(
     context: TransformContext,
-    direction: 'request' | 'response'
+    direction: 'request' | 'response',
   ): BodyTransformRule[] {
     const applicable: BodyTransformRule[] = [];
 
@@ -247,9 +247,8 @@ export class BodyTransformer {
 
       // Check host pattern
       if (rule.hostPattern) {
-        const pattern = typeof rule.hostPattern === 'string'
-          ? new RegExp(rule.hostPattern)
-          : rule.hostPattern;
+        const pattern =
+          typeof rule.hostPattern === 'string' ? new RegExp(rule.hostPattern) : rule.hostPattern;
         if (!pattern.test(context.host)) {
           continue;
         }
@@ -257,9 +256,8 @@ export class BodyTransformer {
 
       // Check path pattern
       if (rule.pathPattern) {
-        const pattern = typeof rule.pathPattern === 'string'
-          ? new RegExp(rule.pathPattern)
-          : rule.pathPattern;
+        const pattern =
+          typeof rule.pathPattern === 'string' ? new RegExp(rule.pathPattern) : rule.pathPattern;
         if (!pattern.test(context.path)) {
           continue;
         }
@@ -267,9 +265,10 @@ export class BodyTransformer {
 
       // Check content type
       if (rule.contentTypeFilter && context.contentType) {
-        const pattern = typeof rule.contentTypeFilter === 'string'
-          ? new RegExp(rule.contentTypeFilter)
-          : rule.contentTypeFilter;
+        const pattern =
+          typeof rule.contentTypeFilter === 'string'
+            ? new RegExp(rule.contentTypeFilter)
+            : rule.contentTypeFilter;
         if (!pattern.test(context.contentType)) {
           continue;
         }
@@ -287,7 +286,7 @@ export class BodyTransformer {
    */
   private transformHeaders(
     headers: IncomingHttpHeaders,
-    transforms: HeaderTransform
+    transforms: HeaderTransform,
   ): { headers: IncomingHttpHeaders; modified: boolean } {
     const result = { ...headers };
     let modified = false;
@@ -347,7 +346,7 @@ export class BodyTransformer {
    */
   private transformJson(
     body: Buffer,
-    operations: JsonOperation[]
+    operations: JsonOperation[],
   ): { body: Buffer; modified: boolean } {
     try {
       const json = JSON.parse(body.toString('utf-8'));
@@ -444,14 +443,14 @@ export class BodyTransformer {
     let current = obj;
 
     for (let i = 0; i < parts.length - 1; i++) {
-      const part = parts[i];
+      const part = parts[i]!;
       if (!(part in current) || current[part] === null) {
         current[part] = {};
       }
       current = current[part];
     }
 
-    current[parts[parts.length - 1]] = value;
+    current[parts[parts.length - 1]!] = value;
   }
 
   /**
@@ -462,14 +461,14 @@ export class BodyTransformer {
     let current = obj;
 
     for (let i = 0; i < parts.length - 1; i++) {
-      const part = parts[i];
+      const part = parts[i]!;
       if (!(part in current)) {
         return false;
       }
       current = current[part];
     }
 
-    const lastPart = parts[parts.length - 1];
+    const lastPart = parts[parts.length - 1]!;
     if (lastPart in current) {
       delete current[lastPart];
       return true;
@@ -483,15 +482,16 @@ export class BodyTransformer {
    */
   private transformText(
     body: Buffer,
-    replacements: TextReplacement[]
+    replacements: TextReplacement[],
   ): { body: Buffer; modified: boolean } {
     let text = body.toString('utf-8');
     let modified = false;
 
     for (const replacement of replacements) {
-      const pattern = typeof replacement.pattern === 'string'
-        ? new RegExp(replacement.pattern, replacement.global !== false ? 'g' : '')
-        : replacement.pattern;
+      const pattern =
+        typeof replacement.pattern === 'string'
+          ? new RegExp(replacement.pattern, replacement.global !== false ? 'g' : '')
+          : replacement.pattern;
 
       const newText = text.replace(pattern, replacement.replacement);
       if (newText !== text) {
@@ -512,8 +512,7 @@ export class BodyTransformer {
    */
   private isJson(contentType?: string): boolean {
     if (!contentType) return false;
-    return contentType.includes('application/json') ||
-           contentType.includes('+json');
+    return contentType.includes('application/json') || contentType.includes('+json');
   }
 
   /**

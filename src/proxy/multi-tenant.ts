@@ -79,7 +79,7 @@ export const TenantExtractors = {
       const host = req.headers.host;
       if (!host) return null;
 
-      const hostname = host.split(':')[0];
+      const hostname = host.split(':')[0]!;
       if (!hostname.endsWith(baseDomain)) return null;
 
       const subdomain = hostname.slice(0, -(baseDomain.length + 1));
@@ -208,7 +208,10 @@ export class MultiTenantManager {
   private readonly config: Required<Omit<MultiTenantConfig, 'tenants' | 'defaultTenantId'>> &
     Pick<MultiTenantConfig, 'defaultTenantId'>;
   private readonly tenants: Map<string, TenantContext> = new Map();
-  private readonly tenantStats: Map<string, { activeConnections: number; totalRequests: number; totalBytes: number }> = new Map();
+  private readonly tenantStats: Map<
+    string,
+    { activeConnections: number; totalRequests: number; totalBytes: number }
+  > = new Map();
 
   constructor(config: MultiTenantConfig) {
     this.config = {
@@ -260,7 +263,10 @@ export class MultiTenantManager {
   /**
    * Add or update a tenant.
    */
-  addTenant(tenantConfig: Omit<TenantConfig, 'createdAt' | 'updatedAt'> & Partial<Pick<TenantConfig, 'createdAt' | 'updatedAt'>>): void {
+  addTenant(
+    tenantConfig: Omit<TenantConfig, 'createdAt' | 'updatedAt'> &
+      Partial<Pick<TenantConfig, 'createdAt' | 'updatedAt'>>,
+  ): void {
     const now = Date.now();
     const existing = this.tenants.get(tenantConfig.id);
 
@@ -293,7 +299,7 @@ export class MultiTenantManager {
 
     this.config.logger.info(
       { tenantId: config.id, name: config.name },
-      existing ? 'Tenant updated' : 'Tenant added'
+      existing ? 'Tenant updated' : 'Tenant added',
     );
   }
 
@@ -326,7 +332,10 @@ export class MultiTenantManager {
   /**
    * Update tenant configuration.
    */
-  updateTenant(tenantId: string, updates: Partial<Omit<TenantConfig, 'id' | 'createdAt' | 'updatedAt'>>): boolean {
+  updateTenant(
+    tenantId: string,
+    updates: Partial<Omit<TenantConfig, 'id' | 'createdAt' | 'updatedAt'>>,
+  ): boolean {
     const existing = this.tenants.get(tenantId);
     if (!existing) return false;
 
@@ -420,8 +429,10 @@ export class MultiTenantManager {
     if (!context || !stats) return false;
 
     // Check max connections limit
-    if (context.config.maxConnections !== undefined &&
-        stats.activeConnections >= context.config.maxConnections) {
+    if (
+      context.config.maxConnections !== undefined &&
+      stats.activeConnections >= context.config.maxConnections
+    ) {
       return false;
     }
 

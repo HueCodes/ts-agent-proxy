@@ -218,9 +218,7 @@ describe('withTimeout', () => {
   it('should reject when timeout expires', async () => {
     const promise = new Promise((resolve) => setTimeout(resolve, 1000));
 
-    await expect(withTimeout(promise, 10, 'Custom timeout')).rejects.toThrow(
-      TimeoutError
-    );
+    await expect(withTimeout(promise, 10, 'Custom timeout')).rejects.toThrow(TimeoutError);
   });
 
   it('should reject with correct timeout value', async () => {

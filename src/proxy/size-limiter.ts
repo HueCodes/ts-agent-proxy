@@ -63,7 +63,7 @@ export class LimitingStream extends Transform {
  */
 export function checkContentLength(
   req: IncomingMessage,
-  limit: number
+  limit: number,
 ): { valid: true } | { valid: false; size: number } {
   const contentLength = req.headers['content-length'];
   if (contentLength) {
@@ -80,7 +80,7 @@ export function checkContentLength(
  */
 export function checkHeadersSize(
   req: IncomingMessage,
-  limit: number
+  limit: number,
 ): { valid: true; size: number } | { valid: false; size: number } {
   // Estimate header size
   let size = 0;
@@ -91,7 +91,7 @@ export function checkHeadersSize(
   // Headers
   const rawHeaders = req.rawHeaders;
   for (let i = 0; i < rawHeaders.length; i += 2) {
-    size += rawHeaders[i].length + rawHeaders[i + 1].length + 4; // "key: value\r\n"
+    size += (rawHeaders[i]?.length ?? 0) + (rawHeaders[i + 1]?.length ?? 0) + 4; // "key: value\r\n"
   }
 
   size += 2; // Final \r\n
@@ -108,7 +108,7 @@ export function checkHeadersSize(
  */
 export function checkUrlLength(
   url: string | undefined,
-  limit: number
+  limit: number,
 ): { valid: true } | { valid: false; length: number } {
   const length = url?.length ?? 0;
   if (length > limit) {
@@ -118,19 +118,62 @@ export function checkUrlLength(
 }
 
 /**
+ * Generate a unique request ID.
+ */
+let requestCounter = 0;
+export function generateRequestId(): string {
+  return `req_${Date.now().toString(36)}_${(requestCounter++).toString(36)}`;
+}
+
+/**
+ * Build a structured JSON error response body.
+ */
+export function buildErrorBody(
+  errorCode: string,
+  message: string,
+  requestId: string,
+  extra?: Record<string, unknown>,
+): string {
+  return JSON.stringify({
+    error: errorCode,
+    message,
+    requestId,
+    ...extra,
+  });
+}
+
+/**
+ * Send a structured JSON error response.
+ */
+export function sendJsonError(
+  res: ServerResponse,
+  statusCode: number,
+  errorCode: string,
+  message: string,
+  requestId?: string,
+  extraHeaders?: Record<string, string>,
+): void {
+  const reqId = requestId ?? generateRequestId();
+  if (!res.headersSent) {
+    res.writeHead(statusCode, {
+      'Content-Type': 'application/json',
+      Connection: 'close',
+      'X-Request-Id': reqId,
+      ...extraHeaders,
+    });
+  }
+  res.end(buildErrorBody(errorCode, message, reqId));
+}
+
+/**
  * Send a 413 Payload Too Large response.
  */
 export function sendPayloadTooLarge(
   res: ServerResponse,
-  message: string = 'Request body too large'
+  message: string = 'Request body too large',
+  requestId?: string,
 ): void {
-  if (!res.headersSent) {
-    res.writeHead(413, {
-      'Content-Type': 'text/plain',
-      'Connection': 'close',
-    });
-  }
-  res.end(message);
+  sendJsonError(res, 413, 'PAYLOAD_TOO_LARGE', message, requestId);
 }
 
 /**
@@ -138,15 +181,10 @@ export function sendPayloadTooLarge(
  */
 export function sendHeadersTooLarge(
   res: ServerResponse,
-  message: string = 'Request headers too large'
+  message: string = 'Request headers too large',
+  requestId?: string,
 ): void {
-  if (!res.headersSent) {
-    res.writeHead(431, {
-      'Content-Type': 'text/plain',
-      'Connection': 'close',
-    });
-  }
-  res.end(message);
+  sendJsonError(res, 431, 'HEADERS_TOO_LARGE', message, requestId);
 }
 
 /**
@@ -154,15 +192,10 @@ export function sendHeadersTooLarge(
  */
 export function sendUriTooLong(
   res: ServerResponse,
-  message: string = 'Request URI too long'
+  message: string = 'Request URI too long',
+  requestId?: string,
 ): void {
-  if (!res.headersSent) {
-    res.writeHead(414, {
-      'Content-Type': 'text/plain',
-      'Connection': 'close',
-    });
-  }
-  res.end(message);
+  sendJsonError(res, 414, 'URI_TOO_LONG', message, requestId);
 }
 
 /**
@@ -170,15 +203,10 @@ export function sendUriTooLong(
  */
 export function sendGatewayTimeout(
   res: ServerResponse,
-  message: string = 'Gateway timeout'
+  message: string = 'Gateway timeout',
+  requestId?: string,
 ): void {
-  if (!res.headersSent) {
-    res.writeHead(504, {
-      'Content-Type': 'text/plain',
-      'Connection': 'close',
-    });
-  }
-  res.end(message);
+  sendJsonError(res, 504, 'GATEWAY_TIMEOUT', message, requestId);
 }
 
 /**
@@ -186,16 +214,12 @@ export function sendGatewayTimeout(
  */
 export function sendServiceUnavailable(
   res: ServerResponse,
-  message: string = 'Service temporarily unavailable'
+  message: string = 'Service temporarily unavailable',
+  requestId?: string,
 ): void {
-  if (!res.headersSent) {
-    res.writeHead(503, {
-      'Content-Type': 'text/plain',
-      'Connection': 'close',
-      'Retry-After': '5',
-    });
-  }
-  res.end(message);
+  sendJsonError(res, 503, 'SERVICE_UNAVAILABLE', message, requestId, {
+    'Retry-After': '5',
+  });
 }
 
 /**
@@ -206,11 +230,15 @@ export function sendSocketError(
   statusCode: number,
   statusText: string,
   message: string,
-  headers: Record<string, string> = {}
+  headers: Record<string, string> = {},
 ): void {
+  const requestId = generateRequestId();
+  const body = buildErrorBody(statusText.toUpperCase().replace(/\s+/g, '_'), message, requestId);
+
   const allHeaders = {
-    'Content-Type': 'text/plain',
-    'Connection': 'close',
+    'Content-Type': 'application/json',
+    Connection: 'close',
+    'X-Request-Id': requestId,
     ...headers,
   };
 
@@ -218,7 +246,7 @@ export function sendSocketError(
   for (const [key, value] of Object.entries(allHeaders)) {
     response += `${key}: ${value}\r\n`;
   }
-  response += `\r\n${message}`;
+  response += `\r\n${body}`;
 
   socket.write(response);
   socket.end();
@@ -229,7 +257,7 @@ export function sendSocketError(
  */
 export function createTimeout<T>(
   ms: number,
-  message: string = 'Operation timed out'
+  message: string = 'Operation timed out',
 ): { promise: Promise<T>; clear: () => void } {
   let timeoutId: NodeJS.Timeout;
 
@@ -266,7 +294,7 @@ export class TimeoutError extends Error {
 export async function withTimeout<T>(
   promise: Promise<T>,
   ms: number,
-  message: string = 'Operation timed out'
+  message: string = 'Operation timed out',
 ): Promise<T> {
   const { promise: timeoutPromise, clear } = createTimeout<T>(ms, message);
 

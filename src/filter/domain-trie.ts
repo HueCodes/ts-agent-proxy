@@ -101,7 +101,7 @@ export class DomainTrie {
   private addToTrie(
     domain: string,
     rule: AllowlistRule,
-    type: 'exact' | 'wildcard' | 'deepWildcard'
+    type: 'exact' | 'wildcard' | 'deepWildcard',
   ): void {
     const segments = this.reverseDomainSegments(domain);
     let node = this.root;
@@ -158,7 +158,7 @@ export class DomainTrie {
     node: TrieNode,
     segments: string[],
     index: number,
-    results: AllowlistRule[]
+    results: AllowlistRule[],
   ): void {
     // Deep wildcard rules at this node match all remaining segments
     if (node.deepWildcardRules.length > 0 && index < segments.length) {
@@ -172,7 +172,7 @@ export class DomainTrie {
       return;
     }
 
-    const segment = segments[index];
+    const segment = segments[index]!;
     const child = node.children.get(segment);
 
     if (child) {
@@ -181,7 +181,7 @@ export class DomainTrie {
       // This means we need exactly one more segment that doesn't have a trie match
       if (index < segments.length - 1) {
         // There are more segments - check if next segment should trigger wildcard
-        const grandchild = child.children.get(segments[index + 1]);
+        const grandchild = child.children.get(segments[index + 1]!);
         if (!grandchild) {
           // No exact match for next segment, check if wildcard applies
           // Only match if there's exactly one more segment (the wildcard match)
@@ -226,7 +226,7 @@ export class DomainTrie {
       return false;
     }
 
-    const segment = segments[index];
+    const segment = segments[index]!;
     const child = node.children.get(segment);
 
     if (!child) {

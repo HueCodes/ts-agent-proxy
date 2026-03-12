@@ -23,6 +23,8 @@ import {
   sendHeadersTooLarge,
   sendUriTooLong,
   sendGatewayTimeout,
+  sendJsonError,
+  generateRequestId,
   LimitingStream,
   SizeLimitExceededError,
   TimeoutError,
@@ -59,7 +61,7 @@ export class ForwardProxy {
         keepAliveTimeout: this.timeouts.idleTimeout,
         ...options.connectionPool,
       },
-      options.logger
+      options.logger,
     );
   }
 
@@ -82,15 +84,19 @@ export class ForwardProxy {
    */
   async handleRequest(req: IncomingMessage, res: ServerResponse): Promise<void> {
     const startTime = Date.now();
+    const requestId = generateRequestId();
+
+    // Set request ID on all responses
+    res.setHeader('X-Request-Id', requestId);
 
     // Check URL length
     const urlCheck = checkUrlLength(req.url, this.limits.maxUrlLength);
     if (!urlCheck.valid) {
       this.options.logger.warn(
-        { urlLength: urlCheck.length, limit: this.limits.maxUrlLength },
-        'URL too long'
+        { requestId, urlLength: urlCheck.length, limit: this.limits.maxUrlLength },
+        'URL too long',
       );
-      sendUriTooLong(res);
+      sendUriTooLong(res, undefined, requestId);
       return;
     }
 
@@ -98,10 +104,10 @@ export class ForwardProxy {
     const headerCheck = checkHeadersSize(req, this.limits.maxHeaderSize);
     if (!headerCheck.valid) {
       this.options.logger.warn(
-        { headerSize: headerCheck.size, limit: this.limits.maxHeaderSize },
-        'Headers too large'
+        { requestId, headerSize: headerCheck.size, limit: this.limits.maxHeaderSize },
+        'Headers too large',
       );
-      sendHeadersTooLarge(res);
+      sendHeadersTooLarge(res, undefined, requestId);
       return;
     }
 
@@ -109,31 +115,35 @@ export class ForwardProxy {
     const contentLengthCheck = checkContentLength(req, this.limits.maxRequestBodySize);
     if (!contentLengthCheck.valid) {
       this.options.logger.warn(
-        { contentLength: contentLengthCheck.size, limit: this.limits.maxRequestBodySize },
-        'Request body too large (Content-Length)'
+        {
+          requestId,
+          contentLength: contentLengthCheck.size,
+          limit: this.limits.maxRequestBodySize,
+        },
+        'Request body too large (Content-Length)',
       );
-      sendPayloadTooLarge(res);
+      sendPayloadTooLarge(res, undefined, requestId);
       return;
     }
 
     const url = this.parseUrl(req);
 
     if (!url) {
-      this.sendError(res, 400, 'Invalid request URL');
+      sendJsonError(res, 400, 'INVALID_URL', 'Invalid request URL', requestId);
       return;
     }
 
     const requestInfo: RequestInfo = {
       host: url.hostname,
-      port: url.port ? parseInt(url.port, 10) : (url.protocol === 'https:' ? 443 : 80),
+      port: url.port ? parseInt(url.port, 10) : url.protocol === 'https:' ? 443 : 80,
       path: url.pathname + url.search,
       method: req.method,
       sourceIp: this.getClientIp(req),
     };
 
     this.options.logger.debug(
-      { host: requestInfo.host, path: requestInfo.path, method: requestInfo.method },
-      'HTTP request received'
+      { requestId, host: requestInfo.host, path: requestInfo.path, method: requestInfo.method },
+      'HTTP request received',
     );
 
     // Check allowlist
@@ -141,7 +151,13 @@ export class ForwardProxy {
 
     if (!matchResult.allowed) {
       this.options.auditLogger.logRequest(requestInfo, matchResult, Date.now() - startTime);
-      this.sendError(res, 403, `Request not allowed: ${matchResult.reason}`);
+      sendJsonError(
+        res,
+        403,
+        'DOMAIN_NOT_ALLOWED',
+        `Request to ${requestInfo.host} is not permitted by the allowlist`,
+        requestId,
+      );
       return;
     }
 
@@ -149,17 +165,15 @@ export class ForwardProxy {
     const rateLimitKey = `${matchResult.matchedRule?.id ?? 'default'}:${requestInfo.sourceIp}`;
     const rateLimitResult = await this.options.rateLimiter.consume(
       rateLimitKey,
-      matchResult.matchedRule?.id
+      matchResult.matchedRule?.id,
     );
 
     if (!rateLimitResult.allowed) {
-      this.options.auditLogger.logRateLimit(
-        requestInfo,
-        rateLimitResult,
-        matchResult.matchedRule
-      );
-      res.setHeader('Retry-After', Math.ceil(rateLimitResult.resetMs / 1000));
-      this.sendError(res, 429, 'Rate limit exceeded');
+      this.options.auditLogger.logRateLimit(requestInfo, rateLimitResult, matchResult.matchedRule);
+      const retryAfter = Math.ceil(rateLimitResult.resetMs / 1000);
+      sendJsonError(res, 429, 'RATE_LIMIT_EXCEEDED', 'Rate limit exceeded', requestId, {
+        'Retry-After': String(retryAfter),
+      });
       return;
     }
 
@@ -170,20 +184,35 @@ export class ForwardProxy {
       this.options.auditLogger.logError(requestInfo, error as Error);
 
       if (error instanceof TimeoutError) {
-        this.options.logger.warn({ host: requestInfo.host, timeout: error.timeout }, 'Request timed out');
-        sendGatewayTimeout(res, 'Upstream server timed out');
+        this.options.logger.warn(
+          { requestId, host: requestInfo.host, timeout: error.timeout },
+          'Request timed out',
+        );
+        sendGatewayTimeout(res, 'Upstream server timed out', requestId);
       } else if (error instanceof SizeLimitExceededError) {
         this.options.logger.warn(
-          { type: error.type, limit: error.limit, received: error.received },
-          'Size limit exceeded'
+          { requestId, type: error.type, limit: error.limit, received: error.received },
+          'Size limit exceeded',
         );
         if (error.type === 'response') {
-          this.sendError(res, 502, 'Response too large');
+          sendJsonError(
+            res,
+            502,
+            'RESPONSE_TOO_LARGE',
+            'Response from upstream exceeded size limit',
+            requestId,
+          );
         } else {
-          sendPayloadTooLarge(res);
+          sendPayloadTooLarge(res, undefined, requestId);
         }
       } else {
-        this.sendError(res, 502, 'Failed to forward request');
+        sendJsonError(
+          res,
+          502,
+          'UPSTREAM_ERROR',
+          'Failed to forward request to upstream server',
+          requestId,
+        );
       }
     }
   }
@@ -216,7 +245,7 @@ export class ForwardProxy {
   private getClientIp(req: IncomingMessage): string {
     const forwarded = req.headers['x-forwarded-for'];
     if (typeof forwarded === 'string') {
-      return forwarded.split(',')[0].trim();
+      return forwarded.split(',')[0]!.trim();
     }
     return req.socket.remoteAddress ?? 'unknown';
   }
@@ -229,7 +258,7 @@ export class ForwardProxy {
     clientRes: ServerResponse,
     targetUrl: URL,
     requestInfo: RequestInfo,
-    startTime: number
+    startTime: number,
   ): Promise<void> {
     return new Promise((resolve, reject) => {
       const transport = targetUrl.protocol === 'https:' ? https : http;
@@ -295,9 +324,11 @@ export class ForwardProxy {
           if (!isNaN(size) && size > this.limits.maxResponseBodySize) {
             this.options.logger.warn(
               { contentLength: size, limit: this.limits.maxResponseBodySize },
-              'Response body too large (Content-Length)'
+              'Response body too large (Content-Length)',
             );
-            safeReject(new SizeLimitExceededError('response', this.limits.maxResponseBodySize, size));
+            safeReject(
+              new SizeLimitExceededError('response', this.limits.maxResponseBodySize, size),
+            );
             proxyReq.destroy();
             return;
           }
@@ -307,7 +338,7 @@ export class ForwardProxy {
         this.options.auditLogger.logRequest(
           requestInfo,
           { allowed: true, reason: 'Request forwarded' },
-          Date.now() - startTime
+          Date.now() - startTime,
         );
 
         // Forward response headers
@@ -418,14 +449,6 @@ export class ForwardProxy {
     }
 
     return filtered;
-  }
-
-  /**
-   * Send an error response.
-   */
-  private sendError(res: ServerResponse, statusCode: number, message: string): void {
-    res.writeHead(statusCode, { 'Content-Type': 'text/plain' });
-    res.end(message);
   }
 }
 

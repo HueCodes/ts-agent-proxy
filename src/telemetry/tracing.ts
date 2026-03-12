@@ -12,10 +12,7 @@ import { getNodeAutoInstrumentations } from '@opentelemetry/auto-instrumentation
 import { OTLPTraceExporter } from '@opentelemetry/exporter-trace-otlp-http';
 import { JaegerExporter } from '@opentelemetry/exporter-jaeger';
 import { resourceFromAttributes } from '@opentelemetry/resources';
-import {
-  ATTR_SERVICE_NAME,
-  ATTR_SERVICE_VERSION,
-} from '@opentelemetry/semantic-conventions';
+import { ATTR_SERVICE_NAME, ATTR_SERVICE_VERSION } from '@opentelemetry/semantic-conventions';
 import {
   trace,
   context,
@@ -165,10 +162,12 @@ export class TracingManager {
       resource,
       traceExporter: exporter,
       instrumentations: this.config.autoInstrumentation
-        ? [getNodeAutoInstrumentations({
-            '@opentelemetry/instrumentation-fs': { enabled: false },
-            '@opentelemetry/instrumentation-dns': { enabled: false },
-          })]
+        ? [
+            getNodeAutoInstrumentations({
+              '@opentelemetry/instrumentation-fs': { enabled: false },
+              '@opentelemetry/instrumentation-dns': { enabled: false },
+            }),
+          ]
         : [],
     });
 
@@ -235,11 +234,7 @@ export class TracingManager {
   /**
    * Start a new span for a proxy request.
    */
-  startProxySpan(
-    name: string,
-    attributes?: ProxySpanAttributes,
-    parentContext?: Context
-  ): Span {
+  startProxySpan(name: string, attributes?: ProxySpanAttributes, parentContext?: Context): Span {
     if (!this.tracer) {
       return trace.getTracer('noop').startSpan('noop');
     }
@@ -251,7 +246,7 @@ export class TracingManager {
         kind: SpanKind.SERVER,
         attributes: attributes as Record<string, any>,
       },
-      ctx
+      ctx,
     );
 
     return span;
@@ -260,11 +255,7 @@ export class TracingManager {
   /**
    * Start a child span.
    */
-  startChildSpan(
-    name: string,
-    parent: Span,
-    attributes?: Record<string, any>
-  ): Span {
+  startChildSpan(name: string, parent: Span, attributes?: Record<string, any>): Span {
     if (!this.tracer) {
       return trace.getTracer('noop').startSpan('noop');
     }
@@ -276,7 +267,7 @@ export class TracingManager {
         kind: SpanKind.INTERNAL,
         attributes,
       },
-      ctx
+      ctx,
     );
   }
 
@@ -316,7 +307,7 @@ export class TracingManager {
   async withSpan<T>(
     name: string,
     fn: (span: Span) => Promise<T>,
-    attributes?: ProxySpanAttributes
+    attributes?: ProxySpanAttributes,
   ): Promise<T> {
     const span = this.startProxySpan(name, attributes);
     const ctx = trace.setSpan(context.active(), span);
@@ -375,9 +366,7 @@ export class TracingManager {
 /**
  * Create a tracing manager.
  */
-export function createTracingManager(
-  config?: Partial<TracingConfig>
-): TracingManager {
+export function createTracingManager(config?: Partial<TracingConfig>): TracingManager {
   return new TracingManager(config);
 }
 

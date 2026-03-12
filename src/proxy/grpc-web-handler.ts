@@ -7,7 +7,6 @@
  * @module proxy/grpc-web-handler
  */
 
-import http from 'node:http';
 import http2 from 'node:http2';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { Logger } from '../logging/logger.js';
@@ -18,10 +17,6 @@ import type { RequestInfo } from '../types/allowlist.js';
 import { GrpcMatcher, createGrpcMatcher } from '../filter/grpc-matcher.js';
 import {
   parseGrpcPath,
-  parseGrpcTimeout,
-  parseGrpcFrames,
-  encodeGrpcFrame,
-  encodeGrpcTrailers,
   isGrpcWebContentType,
   isGrpcWebTextContentType,
   GrpcStatus,
@@ -164,7 +159,7 @@ export class GrpcWebHandler {
 
     this.config.logger.debug(
       { host: hostname, service: grpcPath.fullService, method: grpcPath.method },
-      'gRPC-Web request received'
+      'gRPC-Web request received',
     );
 
     // Build request info
@@ -196,12 +191,16 @@ export class GrpcWebHandler {
     const grpcMatch = this.grpcMatcher.match(path, matchResult.matchedRule?.grpc);
     if (!grpcMatch.allowed) {
       this.stats.requestsRejected++;
-      this.config.auditLogger.logRequest(requestInfo, {
-        allowed: false,
-        reason: grpcMatch.reason,
-      }, {
-        durationMs: Date.now() - startTime,
-      });
+      this.config.auditLogger.logRequest(
+        requestInfo,
+        {
+          allowed: false,
+          reason: grpcMatch.reason,
+        },
+        {
+          durationMs: Date.now() - startTime,
+        },
+      );
       this.sendGrpcWebError(res, GrpcStatus.PERMISSION_DENIED, grpcMatch.reason, isText);
       this.stats.activeRequests--;
       return;
@@ -210,15 +209,11 @@ export class GrpcWebHandler {
     // Check rate limit
     const rateLimitResult = await this.config.rateLimiter.consume(
       clientIp,
-      matchResult.matchedRule?.id
+      matchResult.matchedRule?.id,
     );
     if (!rateLimitResult.allowed) {
       this.stats.requestsRejected++;
-      this.config.auditLogger.logRateLimit(
-        requestInfo,
-        rateLimitResult,
-        matchResult.matchedRule
-      );
+      this.config.auditLogger.logRateLimit(requestInfo, rateLimitResult, matchResult.matchedRule);
       this.sendGrpcWebError(res, GrpcStatus.RESOURCE_EXHAUSTED, 'Rate limit exceeded', isText);
       this.stats.activeRequests--;
       return;
@@ -226,11 +221,20 @@ export class GrpcWebHandler {
 
     // Proxy to upstream
     try {
-      await this.proxyToUpstream(req, res, hostname, port, grpcPath, isText, requestInfo, matchResult);
+      await this.proxyToUpstream(
+        req,
+        res,
+        hostname,
+        port,
+        grpcPath,
+        isText,
+        requestInfo,
+        matchResult,
+      );
     } catch (error) {
       this.config.logger.error(
         { error, host: hostname, service: grpcPath.fullService },
-        'gRPC-Web proxy error'
+        'gRPC-Web proxy error',
       );
       this.config.auditLogger.logError(requestInfo, error as Error);
 
@@ -253,7 +257,7 @@ export class GrpcWebHandler {
     grpcPath: { fullPath: string; fullService: string; method: string },
     isText: boolean,
     requestInfo: RequestInfo,
-    matchResult: any
+    matchResult: any,
   ): Promise<void> {
     return new Promise((resolve, reject) => {
       // Get upstream session
@@ -282,7 +286,7 @@ export class GrpcWebHandler {
           ':scheme': this.config.upstreamTls ? 'https' : 'http',
           ':authority': `${host}:${port}`,
           'content-type': 'application/grpc',
-          'te': 'trailers',
+          te: 'trailers',
         };
 
         // Forward timeout
@@ -318,10 +322,9 @@ export class GrpcWebHandler {
 
         // Collect response
         const responseChunks: Buffer[] = [];
-        let responseHeaders: http2.IncomingHttpHeaders | null = null;
 
-        upstreamStream.on('response', (headers) => {
-          responseHeaders = headers;
+        upstreamStream.on('response', () => {
+          // Response headers received
         });
 
         upstreamStream.on('data', (chunk: Buffer) => {
@@ -332,8 +335,8 @@ export class GrpcWebHandler {
         upstreamStream.on('end', () => {
           clearTimeout(timeoutId);
 
-          let responseBody = Buffer.concat(responseChunks);
-          let trailers: Record<string, string> = {};
+          const responseBody = Buffer.concat(responseChunks);
+          const trailers: Record<string, string> = {};
 
           // Get trailers
           const rawTrailers = upstreamStream.sentTrailers || {};
@@ -349,9 +352,7 @@ export class GrpcWebHandler {
           const fullResponse = Buffer.concat([responseBody, trailerFrame]);
 
           // Set response headers
-          const grpcWebContentType = isText
-            ? 'application/grpc-web-text'
-            : 'application/grpc-web';
+          const grpcWebContentType = isText ? 'application/grpc-web-text' : 'application/grpc-web';
 
           res.setHeader('Content-Type', grpcWebContentType);
           res.setHeader('Access-Control-Allow-Origin', '*');
@@ -373,7 +374,7 @@ export class GrpcWebHandler {
           resolve();
         });
 
-        upstreamStream.on('trailers', (trailers) => {
+        upstreamStream.on('trailers', (_trailers) => {
           // Trailers received - they'll be included in the response
         });
 
@@ -426,9 +427,7 @@ export class GrpcWebHandler {
       return existing;
     }
 
-    const url = this.config.upstreamTls
-      ? `https://${host}:${port}`
-      : `http://${host}:${port}`;
+    const url = this.config.upstreamTls ? `https://${host}:${port}` : `http://${host}:${port}`;
 
     const session = http2.connect(url, {
       rejectUnauthorized: !this.config.insecureSkipVerify,
@@ -454,11 +453,9 @@ export class GrpcWebHandler {
     res: ServerResponse,
     status: GrpcStatus,
     message: string,
-    isText: boolean
+    isText: boolean,
   ): void {
-    const contentType = isText
-      ? 'application/grpc-web-text'
-      : 'application/grpc-web';
+    const contentType = isText ? 'application/grpc-web-text' : 'application/grpc-web';
 
     res.setHeader('Content-Type', contentType);
     res.setHeader('Access-Control-Allow-Origin', '*');
@@ -502,8 +499,8 @@ export class GrpcWebHandler {
   private getClientIp(req: IncomingMessage): string {
     const forwarded = req.headers['x-forwarded-for'];
     if (forwarded) {
-      const ips = Array.isArray(forwarded) ? forwarded[0] : forwarded;
-      return ips.split(',')[0].trim();
+      const ips = Array.isArray(forwarded) ? forwarded[0]! : forwarded;
+      return ips.split(',')[0]!.trim();
     }
     return req.socket?.remoteAddress ?? 'unknown';
   }
@@ -546,8 +543,10 @@ export class GrpcWebHandler {
     if (req.method === 'OPTIONS') {
       res.setHeader('Access-Control-Allow-Origin', '*');
       res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
-      res.setHeader('Access-Control-Allow-Headers',
-        'Content-Type, X-Grpc-Web, X-User-Agent, Grpc-Timeout, Authorization');
+      res.setHeader(
+        'Access-Control-Allow-Headers',
+        'Content-Type, X-Grpc-Web, X-User-Agent, Grpc-Timeout, Authorization',
+      );
       res.setHeader('Access-Control-Max-Age', '86400');
       res.statusCode = 204;
       res.end();

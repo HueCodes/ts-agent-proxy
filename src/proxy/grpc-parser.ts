@@ -173,7 +173,7 @@ export function parseGrpcFrame(buffer: Buffer): GrpcFrame | null {
     return null;
   }
 
-  const compressed = buffer[0] === 1;
+  const compressed = buffer[0]! === 1;
   const length = buffer.readUInt32BE(1);
 
   if (buffer.length < GRPC_FRAME_HEADER_SIZE + length) {
@@ -207,7 +207,7 @@ export function parseGrpcFrames(buffer: Buffer): { frames: GrpcFrame[]; remainin
       break;
     }
 
-    const compressed = buffer[offset] === 1;
+    const compressed = buffer[offset]! === 1;
     const data = buffer.slice(offset + GRPC_FRAME_HEADER_SIZE, offset + totalFrameSize);
 
     frames.push({ compressed, length, data });
@@ -250,8 +250,8 @@ export function parseGrpcTimeout(timeout: string): number | null {
     return null;
   }
 
-  const value = parseInt(match[1], 10);
-  const unit = match[2];
+  const value = parseInt(match[1]!, 10);
+  const unit = match[2]!;
 
   switch (unit) {
     case 'H':
@@ -296,7 +296,9 @@ export function encodeGrpcTimeout(ms: number): string {
  * @param headers - HTTP/2 headers object
  * @returns Parsed metadata map
  */
-export function parseGrpcMetadata(headers: Record<string, string | string[] | undefined>): GrpcMetadata {
+export function parseGrpcMetadata(
+  headers: Record<string, string | string[] | undefined>,
+): GrpcMetadata {
   const metadata: GrpcMetadata = new Map();
 
   for (const [key, value] of Object.entries(headers)) {
@@ -352,16 +354,20 @@ export function encodeGrpcMetadata(metadata: GrpcMetadata): Record<string, strin
  * @param headers - Trailer headers
  * @returns Parsed trailers
  */
-export function parseGrpcTrailers(headers: Record<string, string | string[] | undefined>): GrpcTrailers {
+export function parseGrpcTrailers(
+  headers: Record<string, string | string[] | undefined>,
+): GrpcTrailers {
   const statusStr = headers['grpc-status'];
-  const status = statusStr !== undefined
-    ? parseInt(Array.isArray(statusStr) ? statusStr[0] : statusStr, 10)
-    : GrpcStatus.OK;
+  const status =
+    statusStr !== undefined
+      ? parseInt(Array.isArray(statusStr) ? statusStr[0]! : statusStr, 10)
+      : GrpcStatus.OK;
 
   const messageStr = headers['grpc-message'];
-  const message = messageStr !== undefined
-    ? decodeURIComponent(Array.isArray(messageStr) ? messageStr[0] : messageStr)
-    : undefined;
+  const message =
+    messageStr !== undefined
+      ? decodeURIComponent(Array.isArray(messageStr) ? messageStr[0]! : messageStr)
+      : undefined;
 
   return {
     status: status as GrpcStatus,
@@ -381,7 +387,7 @@ export function parseGrpcTrailers(headers: Record<string, string | string[] | un
 export function encodeGrpcTrailers(
   status: GrpcStatus,
   message?: string,
-  metadata?: GrpcMetadata
+  metadata?: GrpcMetadata,
 ): Record<string, string | string[]> {
   const headers: Record<string, string | string[]> = {
     'grpc-status': String(status),
@@ -475,6 +481,9 @@ export function createGrpcError(status: GrpcStatus, message: string): GrpcTraile
  * @param maxSize - Maximum allowed size
  * @returns True if valid
  */
-export function validateFrameSize(length: number, maxSize: number = DEFAULT_MAX_MESSAGE_SIZE): boolean {
+export function validateFrameSize(
+  length: number,
+  maxSize: number = DEFAULT_MAX_MESSAGE_SIZE,
+): boolean {
   return length >= 0 && length <= maxSize;
 }

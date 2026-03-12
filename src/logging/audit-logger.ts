@@ -207,7 +207,12 @@ export interface AuditLoggerOptions {
  * ```
  */
 export class AuditLogger {
-  private readonly options: Required<Omit<AuditLoggerOptions, 'filePath' | 'logger' | 'destinations' | 'piiScrubbing' | 'logStatusCodes'>> & {
+  private readonly options: Required<
+    Omit<
+      AuditLoggerOptions,
+      'filePath' | 'logger' | 'destinations' | 'piiScrubbing' | 'logStatusCodes'
+    >
+  > & {
     filePath?: string;
     logger?: Logger;
     destinations: LogDestination[];
@@ -241,7 +246,7 @@ export class AuditLogger {
       logger: options.logger,
       loggingLevel,
       logHeaders: options.logHeaders ?? (loggingLevel === 'headers' || loggingLevel === 'full'),
-      logBody: options.logBody ?? (loggingLevel === 'full'),
+      logBody: options.logBody ?? loggingLevel === 'full',
       maxBodyLogSize: options.maxBodyLogSize ?? 1024,
       redactHeaders,
       piiScrubbing: options.piiScrubbing,
@@ -324,7 +329,7 @@ export class AuditLogger {
   createDenialReason(
     code: DenialReasonCode,
     message: string,
-    details?: Record<string, any>
+    details?: Record<string, any>,
   ): DenialReason {
     return { code, message, details };
   }
@@ -339,24 +344,27 @@ export class AuditLogger {
   logRequest(
     request: RequestInfo,
     matchResult: MatchResult,
-    optionsOrDurationMs?: number | {
-      durationMs?: number;
-      headers?: Record<string, string | string[] | undefined>;
-      responseHeaders?: Record<string, string | string[] | undefined>;
-      body?: string | Buffer;
-      requestId?: string;
-      traceId?: string;
-      spanId?: string;
-      response?: ResponseInfo;
-      denialReason?: DenialReason;
-      bytesSent?: number;
-      bytesReceived?: number;
-    }
+    optionsOrDurationMs?:
+      | number
+      | {
+          durationMs?: number;
+          headers?: Record<string, string | string[] | undefined>;
+          responseHeaders?: Record<string, string | string[] | undefined>;
+          body?: string | Buffer;
+          requestId?: string;
+          traceId?: string;
+          spanId?: string;
+          response?: ResponseInfo;
+          denialReason?: DenialReason;
+          bytesSent?: number;
+          bytesReceived?: number;
+        },
   ): void {
     // Handle backward compatibility
-    const options = typeof optionsOrDurationMs === 'number'
-      ? { durationMs: optionsOrDurationMs }
-      : optionsOrDurationMs;
+    const options =
+      typeof optionsOrDurationMs === 'number'
+        ? { durationMs: optionsOrDurationMs }
+        : optionsOrDurationMs;
 
     // Check if we should log this request
     if (!this.shouldLog(options?.response?.statusCode)) {
@@ -380,10 +388,12 @@ export class AuditLogger {
 
     // Add denial reason for denied requests
     if (!matchResult.allowed) {
-      entry.denialReason = options?.denialReason ?? this.createDenialReason(
-        DenialReasonCode.NO_MATCHING_RULE,
-        matchResult.reason ?? 'Request denied by allowlist rules'
-      );
+      entry.denialReason =
+        options?.denialReason ??
+        this.createDenialReason(
+          DenialReasonCode.NO_MATCHING_RULE,
+          matchResult.reason ?? 'Request denied by allowlist rules',
+        );
     }
 
     // Add redacted headers based on logging level
@@ -413,7 +423,7 @@ export class AuditLogger {
    * @returns Headers with sensitive values replaced with [REDACTED]
    */
   private redactHeaders(
-    headers: Record<string, string | string[] | undefined>
+    headers: Record<string, string | string[] | undefined>,
   ): Record<string, string> {
     const result: Record<string, string> = {};
 
@@ -479,7 +489,7 @@ export class AuditLogger {
     request: RequestInfo,
     rateLimitResult: RateLimitResult,
     rule?: AllowlistRule,
-    requestId?: string
+    requestId?: string,
   ): void {
     const entry: AuditLogEntry = {
       requestId: requestId ?? randomUUID(),
@@ -544,16 +554,15 @@ export class AuditLogger {
         // Log destination errors but don't fail
         this.options.logger?.error(
           { error: err, destination: destination.name },
-          'Failed to write to log destination'
+          'Failed to write to log destination',
         );
       }
     }
 
     // Log to main logger if configured
     if (this.options.logToMain && this.options.logger) {
-      const logMethod = entry.decision === 'denied' || entry.decision === 'rate_limited'
-        ? 'warn'
-        : 'info';
+      const logMethod =
+        entry.decision === 'denied' || entry.decision === 'rate_limited' ? 'warn' : 'info';
 
       this.options.logger[logMethod](
         {
@@ -569,7 +578,7 @@ export class AuditLogger {
           durationMs: entry.durationMs,
           denialCode: entry.denialReason?.code,
         },
-        `${entry.decision.toUpperCase()}: ${entry.request.method ?? 'CONNECT'} ${entry.request.host}${entry.request.path ?? ''} -> ${entry.response?.statusCode ?? 'N/A'}`
+        `${entry.decision.toUpperCase()}: ${entry.request.method ?? 'CONNECT'} ${entry.request.host}${entry.request.path ?? ''} -> ${entry.response?.statusCode ?? 'N/A'}`,
       );
     }
   }
@@ -595,7 +604,7 @@ export class AuditLogger {
       } catch (err) {
         this.options.logger?.error(
           { error: err, destination: destination.name },
-          'Failed to close log destination'
+          'Failed to close log destination',
         );
       }
     }

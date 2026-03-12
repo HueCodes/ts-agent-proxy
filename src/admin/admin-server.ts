@@ -80,10 +80,7 @@ export class AdminServer {
    */
   constructor(config: AdminServerConfig) {
     this.config = config;
-    this.auth = new AdminAuth(
-      config.auth ?? DEFAULT_ADMIN_AUTH_CONFIG,
-      config.logger
-    );
+    this.auth = new AdminAuth(config.auth ?? DEFAULT_ADMIN_AUTH_CONFIG, config.logger);
   }
 
   /**
@@ -112,7 +109,7 @@ export class AdminServer {
       this.server!.listen(this.config.port, this.config.host, () => {
         this.config.logger.info(
           { host: this.config.host, port: this.config.port },
-          'Admin server started'
+          'Admin server started',
         );
         resolve();
       });
@@ -221,9 +218,7 @@ export class AdminServer {
    * Handle GET /metrics - JSON metrics endpoint.
    */
   private handleMetrics(_req: IncomingMessage, res: ServerResponse): void {
-    const metrics: ProxyMetrics = this.config.metrics.getMetrics(
-      this.config.getRulesCount()
-    );
+    const metrics: ProxyMetrics = this.config.metrics.getMetrics(this.config.getRulesCount());
 
     res.writeHead(200);
     res.end(JSON.stringify(metrics, null, 2));
@@ -232,10 +227,7 @@ export class AdminServer {
   /**
    * Handle GET /metrics/prometheus - Prometheus format metrics endpoint.
    */
-  private async handlePrometheusMetrics(
-    _req: IncomingMessage,
-    res: ServerResponse
-  ): Promise<void> {
+  private async handlePrometheusMetrics(_req: IncomingMessage, res: ServerResponse): Promise<void> {
     if (!this.config.prometheusMetrics) {
       res.writeHead(404);
       res.end(JSON.stringify({ error: 'Prometheus metrics not configured' }));
@@ -262,10 +254,12 @@ export class AdminServer {
    */
   private handleNotFound(_req: IncomingMessage, res: ServerResponse): void {
     res.writeHead(404);
-    res.end(JSON.stringify({
-      error: 'Not found',
-      endpoints: ['/health', '/ready', '/metrics', '/metrics/prometheus'],
-    }));
+    res.end(
+      JSON.stringify({
+        error: 'Not found',
+        endpoints: ['/health', '/ready', '/metrics', '/metrics/prometheus'],
+      }),
+    );
   }
 
   /**

@@ -113,9 +113,20 @@ export interface MetricsSources {
   /** Certificate cache stats provider */
   certificateCache?: () => LruCacheStats;
   /** Domain trie stats provider */
-  domainTrie?: () => { ruleCount: number; exactDomains: number; nodeCount: number; maxDepth: number };
+  domainTrie?: () => {
+    ruleCount: number;
+    exactDomains: number;
+    nodeCount: number;
+    maxDepth: number;
+  };
   /** Rate limiter stats provider */
-  rateLimiter?: () => { totalRequests: number; totalAllowed: number; totalRejected: number; rejectionRate: number; registeredRules: number };
+  rateLimiter?: () => {
+    totalRequests: number;
+    totalAllowed: number;
+    totalRejected: number;
+    rejectionRate: number;
+    registeredRules: number;
+  };
 }
 
 /**
@@ -171,10 +182,7 @@ export class MetricsCollector {
    * @param decision - The decision made for the request
    * @param ruleId - Optional rule ID that matched
    */
-  recordRequest(
-    decision: 'allowed' | 'denied' | 'rate_limited',
-    ruleId?: string
-  ): void {
+  recordRequest(decision: 'allowed' | 'denied' | 'rate_limited', ruleId?: string): void {
     this.requestsTotal++;
 
     switch (decision) {

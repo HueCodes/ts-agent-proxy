@@ -14,7 +14,7 @@ export class ProxyError extends Error {
    */
   constructor(
     message: string,
-    public readonly code: string
+    public readonly code: string,
   ) {
     super(message);
     this.name = 'ProxyError';
@@ -46,7 +46,7 @@ export class ConfigurationError extends ProxyError {
   constructor(
     message: string,
     public readonly path?: string,
-    public readonly details?: unknown
+    public readonly details?: unknown,
   ) {
     super(message, 'CONFIG_ERROR');
     this.name = 'ConfigurationError';
@@ -74,7 +74,7 @@ export class RateLimitExceededError extends ProxyError {
   constructor(
     public readonly ruleId: string,
     public readonly retryAfter: number,
-    public readonly clientIp?: string
+    public readonly clientIp?: string,
   ) {
     super(`Rate limit exceeded for rule '${ruleId}'`, 'RATE_LIMIT_EXCEEDED');
     this.name = 'RateLimitExceededError';
@@ -101,7 +101,7 @@ export class DomainNotAllowedError extends ProxyError {
    */
   constructor(
     public readonly domain: string,
-    public readonly reason?: string
+    public readonly reason?: string,
   ) {
     super(`Domain '${domain}' is not in the allowlist`, 'DOMAIN_NOT_ALLOWED');
     this.name = 'DomainNotAllowedError';
@@ -129,7 +129,7 @@ export class PathNotAllowedError extends ProxyError {
   constructor(
     public readonly domain: string,
     public readonly path: string,
-    public readonly method?: string
+    public readonly method?: string,
   ) {
     super(`Path '${path}' on '${domain}' is not allowed`, 'PATH_NOT_ALLOWED');
     this.name = 'PathNotAllowedError';
@@ -156,7 +156,7 @@ export class MethodNotAllowedError extends ProxyError {
    */
   constructor(
     public readonly method: string,
-    public readonly allowedMethods: string[]
+    public readonly allowedMethods: string[],
   ) {
     super(`Method '${method}' is not allowed`, 'METHOD_NOT_ALLOWED');
     this.name = 'MethodNotAllowedError';
@@ -182,7 +182,7 @@ export class CertificateError extends ProxyError {
    */
   constructor(
     message: string,
-    public readonly domain?: string
+    public readonly domain?: string,
   ) {
     super(message, 'CERTIFICATE_ERROR');
     this.name = 'CertificateError';
@@ -209,7 +209,7 @@ export class UpstreamConnectionError extends ProxyError {
   constructor(
     public readonly host: string,
     public readonly port: number,
-    public readonly cause?: Error
+    public readonly cause?: Error,
   ) {
     super(`Failed to connect to ${host}:${port}`, 'UPSTREAM_CONNECTION_ERROR');
     this.name = 'UpstreamConnectionError';

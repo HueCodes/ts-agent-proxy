@@ -102,7 +102,7 @@ describe('AdminAuth', () => {
           bearerToken: validToken,
           protectedEndpoints: ['/metrics'],
         },
-        mockLogger
+        mockLogger,
       );
     });
 
@@ -168,7 +168,7 @@ describe('AdminAuth', () => {
           apiKeyHeader: 'X-API-Key',
           protectedEndpoints: ['/metrics'],
         },
-        mockLogger
+        mockLogger,
       );
     });
 
@@ -214,7 +214,7 @@ describe('AdminAuth', () => {
           allowedIps: ['192.168.1.1', '10.0.0.0/8', '127.0.0.1'],
           protectedEndpoints: ['/metrics'],
         },
-        mockLogger
+        mockLogger,
       );
     });
 
@@ -271,7 +271,7 @@ describe('AdminAuth', () => {
           method: 'none',
           rateLimitPerMinute: 3,
         },
-        mockLogger
+        mockLogger,
       );
     });
 

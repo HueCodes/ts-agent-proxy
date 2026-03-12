@@ -201,7 +201,9 @@ describe('PrometheusMetrics', () => {
       metrics.recordRequest('GET', '200', 'test');
       const afterReset = await metrics.getMetrics();
       // Should only have 1 request now
-      expect(afterReset).toContain('test_proxy_requests_total{method="GET",status="200",rule="test"} 1');
+      expect(afterReset).toContain(
+        'test_proxy_requests_total{method="GET",status="200",rule="test"} 1',
+      );
     });
   });
 });

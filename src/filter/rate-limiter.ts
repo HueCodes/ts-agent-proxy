@@ -14,11 +14,7 @@
  * @module filter/rate-limiter
  */
 
-import {
-  RateLimiterMemory,
-  RateLimiterRes,
-  RateLimiterAbstract,
-} from 'rate-limiter-flexible';
+import { RateLimiterMemory, RateLimiterRes, RateLimiterAbstract } from 'rate-limiter-flexible';
 import type { AllowlistRule, RateLimitConfig } from '../types/allowlist.js';
 
 /**
@@ -143,7 +139,7 @@ export class RateLimiter {
 
     this.limiters = new Map();
     this.defaultLimiter = this.createLimiter(
-      this.config.defaultRequestsPerMinute + this.config.burstAllowance
+      this.config.defaultRequestsPerMinute + this.config.burstAllowance,
     );
   }
 
@@ -171,7 +167,7 @@ export class RateLimiter {
     limit: number,
     remaining: number,
     resetMs: number,
-    isLimited: boolean
+    isLimited: boolean,
   ): RateLimitHeaders {
     const resetTimestamp = Math.ceil((Date.now() + resetMs) / 1000);
     const headers: RateLimitHeaders = {
@@ -239,7 +235,7 @@ export class RateLimiter {
   async consume(key: string, ruleId?: string): Promise<RateLimitResult> {
     this.totalRequests++;
     const limiter = ruleId
-      ? this.limiters.get(ruleId) ?? this.defaultLimiter
+      ? (this.limiters.get(ruleId) ?? this.defaultLimiter)
       : this.defaultLimiter;
 
     try {
@@ -254,7 +250,7 @@ export class RateLimiter {
           limiter.points,
           result.remainingPoints,
           result.msBeforeNext,
-          false
+          false,
         ),
       };
     } catch (error) {
@@ -265,12 +261,7 @@ export class RateLimiter {
           remaining: 0,
           resetMs: error.msBeforeNext,
           limit: limiter.points,
-          headers: this.generateHeaders(
-            limiter.points,
-            0,
-            error.msBeforeNext,
-            true
-          ),
+          headers: this.generateHeaders(limiter.points, 0, error.msBeforeNext, true),
         };
       }
       throw error;
@@ -288,7 +279,7 @@ export class RateLimiter {
    */
   async getStatus(key: string, ruleId?: string): Promise<RateLimitResult> {
     const limiter = ruleId
-      ? this.limiters.get(ruleId) ?? this.defaultLimiter
+      ? (this.limiters.get(ruleId) ?? this.defaultLimiter)
       : this.defaultLimiter;
 
     try {
@@ -312,7 +303,7 @@ export class RateLimiter {
           limiter.points,
           remaining,
           result.msBeforeNext,
-          remaining <= 0
+          remaining <= 0,
         ),
       };
     } catch {
@@ -337,7 +328,7 @@ export class RateLimiter {
    */
   async reset(key: string, ruleId?: string): Promise<void> {
     const limiter = ruleId
-      ? this.limiters.get(ruleId) ?? this.defaultLimiter
+      ? (this.limiters.get(ruleId) ?? this.defaultLimiter)
       : this.defaultLimiter;
 
     await limiter.delete(key);
@@ -408,7 +399,7 @@ export class RateLimiter {
  */
 export function createRateLimiter(
   rules: AllowlistRule[],
-  defaultRequestsPerMinute: number = 100
+  defaultRequestsPerMinute: number = 100,
 ): RateLimiter {
   const limiter = new RateLimiter(defaultRequestsPerMinute);
   limiter.registerRules(rules);

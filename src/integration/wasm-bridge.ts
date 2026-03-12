@@ -31,7 +31,7 @@ export interface WasiNetworkConfig {
  */
 export function generateSandboxNetworkConfig(
   proxyHost: string = '127.0.0.1',
-  proxyPort: number = 8080
+  proxyPort: number = 8080,
 ): SandboxNetworkConfig {
   const proxyUrl = `http://${proxyHost}:${proxyPort}`;
 

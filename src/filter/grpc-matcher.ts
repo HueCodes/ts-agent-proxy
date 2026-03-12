@@ -135,7 +135,7 @@ export class GrpcMatcher {
    */
   private matchServices(
     parsed: GrpcPath,
-    patterns: string[]
+    patterns: string[],
   ): { matched: boolean; pattern?: string } {
     for (const pattern of patterns) {
       if (this.matchServicePattern(parsed, pattern)) {
@@ -158,8 +158,7 @@ export class GrpcMatcher {
     // Package wildcard (e.g., myapp.*)
     if (pattern.endsWith('.*')) {
       const packagePrefix = pattern.slice(0, -2);
-      return parsed.package === packagePrefix ||
-             parsed.fullService.startsWith(packagePrefix + '.');
+      return parsed.package === packagePrefix || parsed.fullService.startsWith(packagePrefix + '.');
     }
 
     // Exact match
@@ -171,7 +170,7 @@ export class GrpcMatcher {
    */
   private matchMethods(
     parsed: GrpcPath,
-    patterns: string[]
+    patterns: string[],
   ): { matched: boolean; pattern?: string } {
     for (const pattern of patterns) {
       if (this.matchMethodPattern(parsed, pattern)) {
@@ -213,8 +212,7 @@ export class GrpcMatcher {
    * Check if a service is the gRPC reflection service.
    */
   private isReflectionService(service: string): boolean {
-    return service === GRPC_REFLECTION_SERVICE ||
-           service === GRPC_REFLECTION_SERVICE_V1;
+    return service === GRPC_REFLECTION_SERVICE || service === GRPC_REFLECTION_SERVICE_V1;
   }
 
   /**

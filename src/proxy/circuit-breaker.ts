@@ -139,7 +139,9 @@ export interface CircuitBreakerResult {
  * ```
  */
 export class CircuitBreaker {
-  private readonly config: Required<Omit<CircuitBreakerConfig, 'onStateChange' | 'onFailure' | 'onSuccess'>> &
+  private readonly config: Required<
+    Omit<CircuitBreakerConfig, 'onStateChange' | 'onFailure' | 'onSuccess'>
+  > &
     Pick<CircuitBreakerConfig, 'onStateChange' | 'onFailure' | 'onSuccess'>;
   private readonly circuits: Map<string, CircuitEntry> = new Map();
 
@@ -338,9 +340,8 @@ export class CircuitBreaker {
         successCount: circuit.successCount,
         totalRequests: circuit.totalRequests,
         totalFailures: circuit.totalFailures,
-        averageLatency: circuit.totalRequests > 0
-          ? circuit.totalLatency / circuit.totalRequests
-          : 0,
+        averageLatency:
+          circuit.totalRequests > 0 ? circuit.totalLatency / circuit.totalRequests : 0,
         lastFailure: circuit.lastFailure || null,
         openedAt: circuit.state === CircuitState.OPEN ? circuit.openedAt : null,
       });
@@ -367,9 +368,7 @@ export class CircuitBreaker {
       successCount: circuit.successCount,
       totalRequests: circuit.totalRequests,
       totalFailures: circuit.totalFailures,
-      averageLatency: circuit.totalRequests > 0
-        ? circuit.totalLatency / circuit.totalRequests
-        : 0,
+      averageLatency: circuit.totalRequests > 0 ? circuit.totalLatency / circuit.totalRequests : 0,
       lastFailure: circuit.lastFailure || null,
       openedAt: circuit.state === CircuitState.OPEN ? circuit.openedAt : null,
     };
@@ -433,7 +432,7 @@ export function createCircuitBreaker(config?: CircuitBreakerConfig): CircuitBrea
 export async function withCircuitBreaker<T>(
   breaker: CircuitBreaker,
   key: string,
-  fn: () => Promise<T>
+  fn: () => Promise<T>,
 ): Promise<T> {
   const result = breaker.canExecute(key);
 

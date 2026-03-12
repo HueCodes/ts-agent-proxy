@@ -21,8 +21,17 @@ describe('AuditLogger', () => {
     it('should log allowed requests', async () => {
       const logger = new AuditLogger({ filePath: testLogPath, logToMain: false });
 
-      const request: RequestInfo = { host: 'api.example.com', port: 443, method: 'GET', path: '/users' };
-      const matchResult: MatchResult = { allowed: true, reason: 'Matched rule', matchedRule: { id: 'test', domain: 'api.example.com' } };
+      const request: RequestInfo = {
+        host: 'api.example.com',
+        port: 443,
+        method: 'GET',
+        path: '/users',
+      };
+      const matchResult: MatchResult = {
+        allowed: true,
+        reason: 'Matched rule',
+        matchedRule: { id: 'test', domain: 'api.example.com' },
+      };
 
       logger.logRequest(request, matchResult);
       await logger.close();

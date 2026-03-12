@@ -68,7 +68,7 @@ export interface TransformContext {
 export function transformHeaders(
   headers: Record<string, string | string[] | undefined>,
   transform: HeaderTransform,
-  context?: TransformContext
+  context?: TransformContext,
 ): Record<string, string | string[] | undefined> {
   // Step 1: Rename headers
   if (transform.rename) {
@@ -107,7 +107,7 @@ export function transformHeaders(
  */
 export function getHeader(
   headers: Record<string, string | string[] | undefined>,
-  name: string
+  name: string,
 ): string | string[] | undefined {
   const lowerName = name.toLowerCase();
   for (const [key, value] of Object.entries(headers)) {
@@ -127,7 +127,7 @@ export function getHeader(
  */
 export function deleteHeader(
   headers: Record<string, string | string[] | undefined>,
-  name: string
+  name: string,
 ): boolean {
   const lowerName = name.toLowerCase();
   for (const key of Object.keys(headers)) {
@@ -164,10 +164,7 @@ export function deleteHeader(
  * // "Proxied by api-rule at 2024-01-15T10:30:00.000Z"
  * ```
  */
-export function substituteVariables(
-  value: string,
-  context?: TransformContext
-): string {
+export function substituteVariables(value: string, context?: TransformContext): string {
   if (!context) return value;
 
   return value.replace(/\$\{(\w+)\}/g, (match, varName) => {
@@ -237,7 +234,7 @@ function generateRequestId(): string {
 export function applyRequestTransform(
   headers: Record<string, string | string[] | undefined>,
   transform?: HeaderTransform,
-  context?: TransformContext
+  context?: TransformContext,
 ): Record<string, string | string[] | undefined> {
   if (!transform) return headers;
   return transformHeaders(headers, transform, context);
@@ -254,7 +251,7 @@ export function applyRequestTransform(
 export function applyResponseTransform(
   headers: Record<string, string | string[] | undefined>,
   transform?: HeaderTransform,
-  context?: TransformContext
+  context?: TransformContext,
 ): Record<string, string | string[] | undefined> {
   if (!transform) return headers;
   return transformHeaders(headers, transform, context);

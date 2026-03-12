@@ -83,7 +83,7 @@ describe('ProxyServer Integration', () => {
 function makeProxyRequest(
   url: string,
   method: string,
-  proxyPort: number
+  proxyPort: number,
 ): Promise<{ statusCode: number; body: string }> {
   return new Promise((resolve, reject) => {
     const parsedUrl = new URL(url);
@@ -116,7 +116,7 @@ function makeProxyRequest(
  */
 function makeConnectRequest(
   target: string,
-  proxyPort: number
+  proxyPort: number,
 ): Promise<{ success: boolean; statusCode: number }> {
   return new Promise((resolve) => {
     const req = http.request({

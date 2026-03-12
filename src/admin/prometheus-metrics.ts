@@ -12,7 +12,6 @@ import {
   Gauge,
   Histogram,
   collectDefaultMetrics,
-  register as globalRegistry,
 } from 'prom-client';
 
 /**
@@ -193,11 +192,7 @@ export class PrometheusMetrics {
   /**
    * Record a completed request.
    */
-  recordRequest(
-    method: string,
-    status: string,
-    rule: string = 'unknown'
-  ): void {
+  recordRequest(method: string, status: string, rule: string = 'unknown'): void {
     this.requestsTotal.inc({ method, status, rule });
   }
 
@@ -206,7 +201,7 @@ export class PrometheusMetrics {
    */
   startRequestTimer(
     method: string,
-    targetDomain: string
+    targetDomain: string,
   ): (labels?: { status?: string; rule?: string }) => number {
     const end = this.requestDuration.startTimer({ method, target_domain: targetDomain });
     return (labels) => {
@@ -282,7 +277,7 @@ export class PrometheusMetrics {
     protocol: 'http' | 'https',
     active: number,
     free: number,
-    pending: number
+    pending: number,
   ): void {
     this.connectionPoolSockets.set({ protocol, state: 'active' }, active);
     this.connectionPoolSockets.set({ protocol, state: 'free' }, free);
@@ -336,7 +331,7 @@ export class PrometheusMetrics {
  * Create a Prometheus metrics instance.
  */
 export function createPrometheusMetrics(
-  config?: Partial<PrometheusMetricsConfig>
+  config?: Partial<PrometheusMetricsConfig>,
 ): PrometheusMetrics {
   return new PrometheusMetrics(config);
 }

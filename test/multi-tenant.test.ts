@@ -12,23 +12,27 @@ describe('MultiTenantManager', () => {
   let manager: MultiTenantManager;
   let mockLogger: Logger;
 
-  const createMockRequest = (headers: Record<string, string> = {}, url: string = '/'): IncomingMessage => {
+  const createMockRequest = (
+    headers: Record<string, string> = {},
+    url: string = '/',
+  ): IncomingMessage => {
     return {
       headers,
       url,
     } as IncomingMessage;
   };
 
-  const createTenantConfig = (id: string, overrides: Partial<TenantConfig> = {}): Omit<TenantConfig, 'createdAt' | 'updatedAt'> => ({
+  const createTenantConfig = (
+    id: string,
+    overrides: Partial<TenantConfig> = {},
+  ): Omit<TenantConfig, 'createdAt' | 'updatedAt'> => ({
     id,
     name: `Tenant ${id}`,
     enabled: true,
     allowlist: {
       mode: 'strict',
       defaultAction: 'deny',
-      rules: [
-        { id: 'default-rule', domain: '*.example.com' },
-      ],
+      rules: [{ id: 'default-rule', domain: '*.example.com' }],
     },
     ...overrides,
   });
@@ -110,7 +114,7 @@ describe('MultiTenantManager', () => {
       expect(manager.hasTenant('new-tenant')).toBe(true);
       expect(mockLogger.info).toHaveBeenCalledWith(
         expect.objectContaining({ tenantId: 'new-tenant' }),
-        'Tenant added'
+        'Tenant added',
       );
     });
 
@@ -179,9 +183,7 @@ describe('MultiTenantManager', () => {
     it('should update tenant rules', () => {
       manager.addTenant(createTenantConfig('tenant-1'));
 
-      const newRules = [
-        { id: 'new-rule', domain: 'api.example.com' },
-      ];
+      const newRules = [{ id: 'new-rule', domain: 'api.example.com' }];
 
       expect(manager.updateTenantRules('tenant-1', newRules)).toBe(true);
 
@@ -358,7 +360,7 @@ describe('TenantExtractors', () => {
     it('should try extractors in order', () => {
       const extractor = TenantExtractors.combine(
         TenantExtractors.fromHeader('x-tenant-id'),
-        TenantExtractors.fromSubdomain('example.com')
+        TenantExtractors.fromSubdomain('example.com'),
       );
 
       // First extractor matches
@@ -379,7 +381,7 @@ describe('TenantExtractors', () => {
     it('should return null if no extractor matches', () => {
       const extractor = TenantExtractors.combine(
         TenantExtractors.fromHeader('x-tenant-id'),
-        TenantExtractors.fromHeader('x-other')
+        TenantExtractors.fromHeader('x-other'),
       );
 
       const req = { headers: {} } as IncomingMessage;

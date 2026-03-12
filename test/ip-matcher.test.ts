@@ -1,5 +1,10 @@
 import { describe, it, expect } from 'vitest';
-import { IpMatcher, createIpMatcher, matchesIp, matchesIpWithExclusion } from '../src/filter/ip-matcher.js';
+import {
+  IpMatcher,
+  createIpMatcher,
+  matchesIp,
+  matchesIpWithExclusion,
+} from '../src/filter/ip-matcher.js';
 
 describe('IpMatcher', () => {
   describe('IPv4 matching', () => {
@@ -123,17 +128,9 @@ describe('matchesIpWithExclusion', () => {
   });
 
   it('should exclude IPs in exclude list', () => {
-    expect(matchesIpWithExclusion(
-      '192.168.0.1',
-      ['192.168.0.0/24'],
-      ['192.168.0.1']
-    )).toBe(false);
+    expect(matchesIpWithExclusion('192.168.0.1', ['192.168.0.0/24'], ['192.168.0.1'])).toBe(false);
 
-    expect(matchesIpWithExclusion(
-      '192.168.0.50',
-      ['192.168.0.0/24'],
-      ['192.168.0.1']
-    )).toBe(true);
+    expect(matchesIpWithExclusion('192.168.0.50', ['192.168.0.0/24'], ['192.168.0.1'])).toBe(true);
   });
 
   it('should allow all if no allow list but with exclusions', () => {

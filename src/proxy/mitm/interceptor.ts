@@ -8,9 +8,8 @@
 import tls from 'node:tls';
 import http from 'node:http';
 import https from 'node:https';
-import net from 'node:net';
 import type { Socket } from 'node:net';
-import type { IncomingMessage, ServerResponse } from 'node:http';
+import type { IncomingMessage } from 'node:http';
 import type { Logger } from '../../logging/logger.js';
 import type { AllowlistMatcher } from '../../filter/allowlist-matcher.js';
 import type { RateLimiter } from '../../filter/rate-limiter.js';
@@ -18,18 +17,13 @@ import type { AuditLogger } from '../../logging/audit-logger.js';
 import type { RequestInfo } from '../../types/allowlist.js';
 import type { LimitsConfig, TimeoutsConfig } from '../../types/config.js';
 import { DEFAULT_LIMITS, DEFAULT_TIMEOUTS } from '../../types/config.js';
-import { CertManager, type CertificateInfo } from './cert-manager.js';
+import { CertManager } from './cert-manager.js';
 import {
   HttpRequestParser,
   HttpParseError,
   type ParsedHttpRequest,
-  serializeHttpRequest,
 } from '../http-parser.js';
-import {
-  LimitingStream,
-  SizeLimitExceededError,
-  TimeoutError,
-} from '../size-limiter.js';
+import { SizeLimitExceededError, TimeoutError } from '../size-limiter.js';
 
 export interface MitmInterceptorOptions {
   allowlistMatcher: AllowlistMatcher;
@@ -55,11 +49,7 @@ export class MitmInterceptor {
   /**
    * Handle a CONNECT request with MITM interception.
    */
-  async handleConnect(
-    req: IncomingMessage,
-    clientSocket: Socket,
-    head: Buffer
-  ): Promise<void> {
+  async handleConnect(req: IncomingMessage, clientSocket: Socket, _head: Buffer): Promise<void> {
     const { host, port } = this.parseTarget(req.url ?? '');
     const sourceIp = this.getClientIp(req);
 
@@ -84,9 +74,7 @@ export class MitmInterceptor {
 
       // Send connection established response
       clientSocket.write(
-        'HTTP/1.1 200 Connection Established\r\n' +
-        'Proxy-Agent: ts-agent-proxy\r\n' +
-        '\r\n'
+        'HTTP/1.1 200 Connection Established\r\n' + 'Proxy-Agent: ts-agent-proxy\r\n' + '\r\n',
       );
 
       // Upgrade to TLS
@@ -110,7 +98,7 @@ export class MitmInterceptor {
     clientSocket: tls.TLSSocket,
     targetHost: string,
     targetPort: number,
-    sourceIp: string
+    sourceIp: string,
   ): void {
     // Create robust HTTP parser with size limits
     const parser = new HttpRequestParser({
@@ -193,30 +181,38 @@ export class MitmInterceptor {
         const rateLimitKey = `${matchResult.matchedRule?.id ?? 'default'}:${sourceIp}`;
         const rateLimitResult = await this.options.rateLimiter.consume(
           rateLimitKey,
-          matchResult.matchedRule?.id
+          matchResult.matchedRule?.id,
         );
 
         if (!rateLimitResult.allowed) {
           this.options.auditLogger.logRateLimit(
             requestInfo,
             rateLimitResult,
-            matchResult.matchedRule
+            matchResult.matchedRule,
           );
-          const response = this.createErrorResponse(
-            429,
-            'Rate limit exceeded',
-            { 'Retry-After': Math.ceil(rateLimitResult.resetMs / 1000).toString() }
-          );
+          const response = this.createErrorResponse(429, 'Rate limit exceeded', {
+            'Retry-After': Math.ceil(rateLimitResult.resetMs / 1000).toString(),
+          });
           clientSocket.write(response);
           this.prepareForNextRequest(clientSocket, parser);
           return;
         }
 
         // Forward the request
-        await this.forwardRequest(clientSocket, targetHost, targetPort, request, requestInfo, startTime);
+        await this.forwardRequest(
+          clientSocket,
+          targetHost,
+          targetPort,
+          request,
+          requestInfo,
+          startTime,
+        );
         this.prepareForNextRequest(clientSocket, parser);
       } catch (error) {
-        this.options.logger.error({ error: (error as Error).message }, 'Error processing MITM request');
+        this.options.logger.error(
+          { error: (error as Error).message },
+          'Error processing MITM request',
+        );
         if (error instanceof TimeoutError) {
           const response = this.createErrorResponse(504, 'Gateway Timeout');
           clientSocket.write(response);
@@ -251,10 +247,7 @@ export class MitmInterceptor {
   /**
    * Prepare for the next request on a keep-alive connection.
    */
-  private prepareForNextRequest(
-    clientSocket: tls.TLSSocket,
-    parser: HttpRequestParser
-  ): void {
+  private prepareForNextRequest(clientSocket: tls.TLSSocket, parser: HttpRequestParser): void {
     parser.reset();
     // The data event handler will continue feeding data to the parser
   }
@@ -268,7 +261,7 @@ export class MitmInterceptor {
     targetPort: number,
     request: ParsedHttpRequest,
     requestInfo: RequestInfo,
-    startTime: number
+    startTime: number,
   ): Promise<void> {
     return new Promise((resolve, reject) => {
       let connectTimeoutId: NodeJS.Timeout | undefined;
@@ -330,7 +323,9 @@ export class MitmInterceptor {
         if (contentLengthHeader) {
           const size = parseInt(contentLengthHeader, 10);
           if (!isNaN(size) && size > this.limits.maxResponseBodySize) {
-            safeReject(new SizeLimitExceededError('response', this.limits.maxResponseBodySize, size));
+            safeReject(
+              new SizeLimitExceededError('response', this.limits.maxResponseBodySize, size),
+            );
             proxyReq.destroy();
             return;
           }
@@ -339,7 +334,7 @@ export class MitmInterceptor {
         this.options.auditLogger.logRequest(
           requestInfo,
           { allowed: true, reason: 'Request forwarded (MITM)' },
-          Date.now() - startTime
+          Date.now() - startTime,
         );
 
         // Build response headers
@@ -359,9 +354,15 @@ export class MitmInterceptor {
           if (responseBytesReceived > this.limits.maxResponseBodySize) {
             this.options.logger.warn(
               { received: responseBytesReceived, limit: this.limits.maxResponseBodySize },
-              'Response body exceeded limit'
+              'Response body exceeded limit',
             );
-            safeReject(new SizeLimitExceededError('response', this.limits.maxResponseBodySize, responseBytesReceived));
+            safeReject(
+              new SizeLimitExceededError(
+                'response',
+                this.limits.maxResponseBodySize,
+                responseBytesReceived,
+              ),
+            );
             proxyReq.destroy();
             return;
           }
@@ -399,14 +400,13 @@ export class MitmInterceptor {
     });
   }
 
-
   /**
    * Create an HTTP error response.
    */
   private createErrorResponse(
     status: number,
     message: string,
-    extraHeaders: Record<string, string> = {}
+    extraHeaders: Record<string, string> = {},
   ): string {
     const statusText = http.STATUS_CODES[status] ?? 'Error';
     let response = `HTTP/1.1 ${status} ${statusText}\r\n`;
@@ -421,14 +421,16 @@ export class MitmInterceptor {
   }
 
   private parseTarget(url: string): { host: string; port: number } {
-    const [host, portStr] = url.split(':');
+    const parts = url.split(':');
+    const host = parts[0] ?? '';
+    const portStr = parts[1];
     return { host, port: portStr ? parseInt(portStr, 10) : 443 };
   }
 
   private getClientIp(req: IncomingMessage): string {
     const forwarded = req.headers['x-forwarded-for'];
     if (typeof forwarded === 'string') {
-      return forwarded.split(',')[0].trim();
+      return forwarded.split(',')[0]!.trim();
     }
     return req.socket.remoteAddress ?? 'unknown';
   }
@@ -436,9 +438,9 @@ export class MitmInterceptor {
   private sendForbidden(socket: Socket, reason: string): void {
     socket.write(
       'HTTP/1.1 403 Forbidden\r\n' +
-      'Content-Type: text/plain\r\n' +
-      'Connection: close\r\n\r\n' +
-      reason
+        'Content-Type: text/plain\r\n' +
+        'Connection: close\r\n\r\n' +
+        reason,
     );
     socket.end();
   }
@@ -446,9 +448,9 @@ export class MitmInterceptor {
   private sendError(socket: Socket, reason: string): void {
     socket.write(
       'HTTP/1.1 502 Bad Gateway\r\n' +
-      'Content-Type: text/plain\r\n' +
-      'Connection: close\r\n\r\n' +
-      reason
+        'Content-Type: text/plain\r\n' +
+        'Connection: close\r\n\r\n' +
+        reason,
     );
     socket.end();
   }

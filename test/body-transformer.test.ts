@@ -55,9 +55,7 @@ describe('BodyTransformer', () => {
             id: 'delete-rule',
             direction: 'request',
             contentTypeFilter: 'application/json',
-            jsonOperations: [
-              { type: 'delete', path: 'sensitive' },
-            ],
+            jsonOperations: [{ type: 'delete', path: 'sensitive' }],
           },
         ],
       });
@@ -79,9 +77,7 @@ describe('BodyTransformer', () => {
             id: 'rename-rule',
             direction: 'request',
             contentTypeFilter: 'application/json',
-            jsonOperations: [
-              { type: 'rename', path: 'oldName', newPath: 'newName' },
-            ],
+            jsonOperations: [{ type: 'rename', path: 'oldName', newPath: 'newName' }],
           },
         ],
       });
@@ -103,9 +99,7 @@ describe('BodyTransformer', () => {
             id: 'copy-rule',
             direction: 'request',
             contentTypeFilter: 'application/json',
-            jsonOperations: [
-              { type: 'copy', path: 'source', newPath: 'copy' },
-            ],
+            jsonOperations: [{ type: 'copy', path: 'source', newPath: 'copy' }],
           },
         ],
       });
@@ -127,9 +121,7 @@ describe('BodyTransformer', () => {
             id: 'move-rule',
             direction: 'request',
             contentTypeFilter: 'application/json',
-            jsonOperations: [
-              { type: 'move', path: 'source', newPath: 'destination' },
-            ],
+            jsonOperations: [{ type: 'move', path: 'source', newPath: 'destination' }],
           },
         ],
       });
@@ -259,7 +251,7 @@ describe('BodyTransformer', () => {
       const result1 = await transformer.transform(
         body,
         createContext({ host: 'api.example.com' }),
-        'request'
+        'request',
       );
       expect(JSON.parse(result1.body.toString()).matched).toBe(true);
 
@@ -267,7 +259,7 @@ describe('BodyTransformer', () => {
       const result2 = await transformer.transform(
         body,
         createContext({ host: 'www.example.com' }),
-        'request'
+        'request',
       );
       expect(result2.bodyModified).toBe(false);
     });
@@ -290,7 +282,7 @@ describe('BodyTransformer', () => {
       const result1 = await transformer.transform(
         body,
         createContext({ path: '/api/users' }),
-        'request'
+        'request',
       );
       expect(result1.bodyModified).toBe(true);
 
@@ -298,7 +290,7 @@ describe('BodyTransformer', () => {
       const result2 = await transformer.transform(
         body,
         createContext({ path: '/health' }),
-        'request'
+        'request',
       );
       expect(result2.bodyModified).toBe(false);
     });
@@ -321,7 +313,7 @@ describe('BodyTransformer', () => {
       const result1 = await transformer.transform(
         body,
         createContext({ contentType: 'application/json' }),
-        'request'
+        'request',
       );
       expect(result1.bodyModified).toBe(true);
 
@@ -329,7 +321,7 @@ describe('BodyTransformer', () => {
       const result2 = await transformer.transform(
         body,
         createContext({ contentType: 'text/plain' }),
-        'request'
+        'request',
       );
       expect(result2.bodyModified).toBe(false);
     });
@@ -396,9 +388,7 @@ describe('BodyTransformer', () => {
           {
             id: 'add-data',
             direction: 'request',
-            jsonOperations: [
-              { type: 'set', path: 'added', value: 'some extra data' },
-            ],
+            jsonOperations: [{ type: 'set', path: 'added', value: 'some extra data' }],
           },
         ],
       });
@@ -433,9 +423,7 @@ describe('BodyTransformer', () => {
 
     it('should remove rules', async () => {
       transformer = createBodyTransformer({
-        rules: [
-          { id: 'remove-me', direction: 'request', jsonOperations: [] },
-        ],
+        rules: [{ id: 'remove-me', direction: 'request', jsonOperations: [] }],
       });
 
       expect(transformer.removeRule('remove-me')).toBe(true);
@@ -480,11 +468,7 @@ describe('BodyTransformer', () => {
         ],
       });
 
-      const result = await transformer.transform(
-        Buffer.from(''),
-        createContext(),
-        'request'
-      );
+      const result = await transformer.transform(Buffer.from(''), createContext(), 'request');
 
       expect(result.bodyModified).toBe(false);
       expect(result.appliedRules).toHaveLength(0);

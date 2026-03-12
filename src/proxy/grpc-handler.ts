@@ -8,7 +8,6 @@
  */
 
 import http2 from 'node:http2';
-import tls from 'node:tls';
 import type { Logger } from '../logging/logger.js';
 import type { AuditLogger } from '../logging/audit-logger.js';
 import type { AllowlistMatcher } from '../filter/allowlist-matcher.js';
@@ -18,10 +17,8 @@ import { GrpcMatcher, createGrpcMatcher } from '../filter/grpc-matcher.js';
 import {
   parseGrpcPath,
   parseGrpcTimeout,
-  encodeGrpcTrailers,
   isGrpcContentType,
   GrpcStatus,
-  GrpcStatusName,
   DEFAULT_MAX_MESSAGE_SIZE,
   type GrpcPath,
 } from './grpc-parser.js';
@@ -159,7 +156,7 @@ export class GrpcHandler {
    */
   async handleStream(
     stream: http2.ServerHttp2Stream,
-    headers: http2.IncomingHttpHeaders
+    headers: http2.IncomingHttpHeaders,
   ): Promise<void> {
     const startTime = Date.now();
     this.stats.totalRequests++;
@@ -181,7 +178,7 @@ export class GrpcHandler {
 
     this.config.logger.debug(
       { host, service: grpcPath.fullService, method: grpcPath.method },
-      'gRPC request received'
+      'gRPC request received',
     );
 
     // Build request info for allowlist checking
@@ -213,12 +210,16 @@ export class GrpcHandler {
     const grpcMatch = this.grpcMatcher.match(path, matchResult.matchedRule?.grpc);
     if (!grpcMatch.allowed) {
       this.stats.requestsRejected++;
-      this.config.auditLogger.logRequest(requestInfo, {
-        allowed: false,
-        reason: grpcMatch.reason,
-      }, {
-        durationMs: Date.now() - startTime,
-      });
+      this.config.auditLogger.logRequest(
+        requestInfo,
+        {
+          allowed: false,
+          reason: grpcMatch.reason,
+        },
+        {
+          durationMs: Date.now() - startTime,
+        },
+      );
       this.sendGrpcError(stream, GrpcStatus.PERMISSION_DENIED, grpcMatch.reason);
       this.stats.activeStreams--;
       return;
@@ -227,15 +228,11 @@ export class GrpcHandler {
     // Check rate limit
     const rateLimitResult = await this.config.rateLimiter.consume(
       clientIp,
-      matchResult.matchedRule?.id
+      matchResult.matchedRule?.id,
     );
     if (!rateLimitResult.allowed) {
       this.stats.requestsRejected++;
-      this.config.auditLogger.logRateLimit(
-        requestInfo,
-        rateLimitResult,
-        matchResult.matchedRule
-      );
+      this.config.auditLogger.logRateLimit(requestInfo, rateLimitResult, matchResult.matchedRule);
       this.sendGrpcError(stream, GrpcStatus.RESOURCE_EXHAUSTED, 'Rate limit exceeded');
       this.stats.activeStreams--;
       return;
@@ -249,10 +246,7 @@ export class GrpcHandler {
     try {
       await this.proxyToUpstream(stream, headers, host, port, grpcPath, requestInfo, matchResult);
     } catch (error) {
-      this.config.logger.error(
-        { error, host, service: grpcPath.fullService },
-        'gRPC proxy error'
-      );
+      this.config.logger.error({ error, host, service: grpcPath.fullService }, 'gRPC proxy error');
       this.config.auditLogger.logError(requestInfo, error as Error);
 
       if (!stream.destroyed) {
@@ -273,7 +267,7 @@ export class GrpcHandler {
     port: number,
     grpcPath: GrpcPath,
     requestInfo: RequestInfo,
-    matchResult: any
+    matchResult: any,
   ): Promise<void> {
     return new Promise((resolve, reject) => {
       // Get or create upstream connection
@@ -356,11 +350,7 @@ export class GrpcHandler {
       });
 
       // Pipe data bidirectionally
-      let bytesFromClient = 0;
-      let bytesFromUpstream = 0;
-
       clientStream.on('data', (chunk: Buffer) => {
-        bytesFromClient += chunk.length;
         this.stats.bytesTransferred += chunk.length;
         this.stats.messagesForwarded++;
 
@@ -370,7 +360,6 @@ export class GrpcHandler {
       });
 
       upstreamStream.on('data', (chunk: Buffer) => {
-        bytesFromUpstream += chunk.length;
         this.stats.bytesTransferred += chunk.length;
         this.stats.messagesForwarded++;
 
@@ -424,7 +413,7 @@ export class GrpcHandler {
         reject(error);
       });
 
-      clientStream.on('error', (error) => {
+      clientStream.on('error', (_error) => {
         clearTimeout(timeoutId);
         if (!upstreamStream.destroyed) {
           upstreamStream.destroy();
@@ -452,9 +441,7 @@ export class GrpcHandler {
     }
 
     // Create new session
-    const url = this.config.upstreamTls
-      ? `https://${host}:${port}`
-      : `http://${host}:${port}`;
+    const url = this.config.upstreamTls ? `https://${host}:${port}` : `http://${host}:${port}`;
 
     const options: http2.SecureClientSessionOptions = {
       rejectUnauthorized: !this.config.insecureSkipVerify,
@@ -492,7 +479,7 @@ export class GrpcHandler {
   private sendGrpcError(
     stream: http2.ServerHttp2Stream,
     status: GrpcStatus,
-    message: string
+    message: string,
   ): void {
     const errorCount = this.stats.errorsByStatus.get(status) ?? 0;
     this.stats.errorsByStatus.set(status, errorCount + 1);
@@ -504,12 +491,15 @@ export class GrpcHandler {
     try {
       // For gRPC errors, send headers with trailers (Trailers-Only response)
       // This is the standard gRPC way to send errors without body data
-      stream.respond({
-        [HTTP2_HEADER_STATUS]: 200,
-        [HTTP2_HEADER_CONTENT_TYPE]: 'application/grpc',
-        'grpc-status': String(status),
-        'grpc-message': encodeURIComponent(message),
-      }, { endStream: true });
+      stream.respond(
+        {
+          [HTTP2_HEADER_STATUS]: 200,
+          [HTTP2_HEADER_CONTENT_TYPE]: 'application/grpc',
+          'grpc-status': String(status),
+          'grpc-message': encodeURIComponent(message),
+        },
+        { endStream: true },
+      );
     } catch {
       // Stream may be in wrong state
       stream.destroy();
@@ -570,7 +560,7 @@ export class GrpcHandler {
    * Close all upstream connections.
    */
   closeAll(): void {
-    for (const [key, conn] of this.upstreamConnections) {
+    for (const [, conn] of this.upstreamConnections) {
       if (!conn.session.destroyed) {
         conn.session.close();
       }
@@ -596,7 +586,9 @@ export function createGrpcHandler(config: GrpcHandlerConfig): GrpcHandler {
 /**
  * Check if request headers indicate gRPC.
  */
-export function isGrpcRequest(headers: http2.IncomingHttpHeaders | Record<string, string | string[] | undefined>): boolean {
+export function isGrpcRequest(
+  headers: http2.IncomingHttpHeaders | Record<string, string | string[] | undefined>,
+): boolean {
   const contentType = headers['content-type'] ?? headers[HTTP2_HEADER_CONTENT_TYPE];
   return isGrpcContentType(contentType as string | undefined);
 }

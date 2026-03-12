@@ -4,7 +4,6 @@
 
 import forge from 'node-forge';
 import fs from 'node:fs';
-import path from 'node:path';
 import { LruCache, createLruCache, type LruCacheStats } from '../../utils/lru-cache.js';
 
 export interface CertificateInfo {

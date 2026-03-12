@@ -7,7 +7,7 @@
  */
 
 import net from 'node:net';
-import type { IncomingMessage, ServerResponse } from 'node:http';
+import type { IncomingMessage } from 'node:http';
 import type { Socket } from 'node:net';
 import type { Logger } from '../logging/logger.js';
 import type { AllowlistMatcher } from '../filter/allowlist-matcher.js';
@@ -48,11 +48,7 @@ export class ConnectHandler {
    * @param clientSocket - The client socket
    * @param head - Any initial data after the headers
    */
-  async handleConnect(
-    req: IncomingMessage,
-    clientSocket: Socket,
-    head: Buffer
-  ): Promise<void> {
+  async handleConnect(req: IncomingMessage, clientSocket: Socket, head: Buffer): Promise<void> {
     const startTime = Date.now();
     const { host, port } = this.parseTarget(req.url ?? '');
     const sourceIp = this.getClientIp(req);
@@ -78,15 +74,11 @@ export class ConnectHandler {
     const rateLimitKey = `${matchResult.matchedRule?.id ?? 'default'}:${sourceIp}`;
     const rateLimitResult = await this.options.rateLimiter.consume(
       rateLimitKey,
-      matchResult.matchedRule?.id
+      matchResult.matchedRule?.id,
     );
 
     if (!rateLimitResult.allowed) {
-      this.options.auditLogger.logRateLimit(
-        requestInfo,
-        rateLimitResult,
-        matchResult.matchedRule
-      );
+      this.options.auditLogger.logRateLimit(requestInfo, rateLimitResult, matchResult.matchedRule);
       this.sendRateLimited(clientSocket, rateLimitResult.resetMs);
       return;
     }
@@ -98,7 +90,12 @@ export class ConnectHandler {
       this.options.auditLogger.logError(requestInfo, error as Error);
 
       if (error instanceof TimeoutError) {
-        sendSocketError(clientSocket, 504, 'Gateway Timeout', 'Connection to upstream server timed out');
+        sendSocketError(
+          clientSocket,
+          504,
+          'Gateway Timeout',
+          'Connection to upstream server timed out',
+        );
       } else {
         this.sendError(clientSocket, 'Failed to establish connection');
       }
@@ -109,7 +106,9 @@ export class ConnectHandler {
    * Parse the target host and port from the CONNECT request.
    */
   private parseTarget(url: string): { host: string; port: number } {
-    const [host, portStr] = url.split(':');
+    const parts = url.split(':');
+    const host = parts[0] ?? '';
+    const portStr = parts[1];
     const port = portStr ? parseInt(portStr, 10) : 443;
     return { host, port };
   }
@@ -120,7 +119,7 @@ export class ConnectHandler {
   private getClientIp(req: IncomingMessage): string {
     const forwarded = req.headers['x-forwarded-for'];
     if (typeof forwarded === 'string') {
-      return forwarded.split(',')[0].trim();
+      return forwarded.split(',')[0]!.trim();
     }
     return req.socket.remoteAddress ?? 'unknown';
   }
@@ -134,14 +133,14 @@ export class ConnectHandler {
     host: string,
     port: number,
     requestInfo: RequestInfo,
-    startTime: number
+    startTime: number,
   ): Promise<void> {
     return new Promise((resolve, reject) => {
       let connectTimeoutId: NodeJS.Timeout | undefined;
       let idleTimeoutId: NodeJS.Timeout | undefined;
       let resolved = false;
 
-      const cleanup = () => {
+      const cleanupAll = () => {
         if (connectTimeoutId) clearTimeout(connectTimeoutId);
         if (idleTimeoutId) clearTimeout(idleTimeoutId);
       };
@@ -149,7 +148,7 @@ export class ConnectHandler {
       const safeReject = (error: Error) => {
         if (!resolved) {
           resolved = true;
-          cleanup();
+          cleanupAll();
           reject(error);
         }
       };
@@ -157,7 +156,8 @@ export class ConnectHandler {
       const safeResolve = () => {
         if (!resolved) {
           resolved = true;
-          cleanup();
+          // Only clear connect timeout on resolve — idle timeout must persist
+          if (connectTimeoutId) clearTimeout(connectTimeoutId);
           resolve();
         }
       };
@@ -173,7 +173,10 @@ export class ConnectHandler {
 
       // Set connect timeout
       connectTimeoutId = setTimeout(() => {
-        this.options.logger.warn({ host, port, timeout: this.timeouts.connectTimeout }, 'Tunnel connect timeout');
+        this.options.logger.warn(
+          { host, port, timeout: this.timeouts.connectTimeout },
+          'Tunnel connect timeout',
+        );
         safeReject(new TimeoutError('Connect timeout', this.timeouts.connectTimeout));
         clientSocket.destroy();
       }, this.timeouts.connectTimeout);
@@ -189,16 +192,14 @@ export class ConnectHandler {
 
         // Send success response
         clientSocket.write(
-          'HTTP/1.1 200 Connection Established\r\n' +
-          'Proxy-Agent: ts-agent-proxy\r\n' +
-          '\r\n'
+          'HTTP/1.1 200 Connection Established\r\n' + 'Proxy-Agent: ts-agent-proxy\r\n' + '\r\n',
         );
 
         // Log successful connection
         this.options.auditLogger.logRequest(
           requestInfo,
           { allowed: true, reason: 'Tunnel established' },
-          Date.now() - startTime
+          Date.now() - startTime,
         );
 
         // Pipe the connection data
@@ -225,17 +226,17 @@ export class ConnectHandler {
       clientSocket.on('error', (err) => {
         this.options.logger.error({ error: err.message }, 'Client socket error');
         serverSocket.destroy();
-        cleanup();
+        cleanupAll();
       });
 
       clientSocket.on('close', () => {
         serverSocket.destroy();
-        cleanup();
+        cleanupAll();
       });
 
       serverSocket.on('close', () => {
         clientSocket.destroy();
-        cleanup();
+        cleanupAll();
       });
     });
   }
@@ -244,14 +245,7 @@ export class ConnectHandler {
    * Send a 403 Forbidden response.
    */
   private sendForbidden(socket: Socket, reason: string): void {
-    socket.write(
-      'HTTP/1.1 403 Forbidden\r\n' +
-      'Content-Type: text/plain\r\n' +
-      'Connection: close\r\n' +
-      '\r\n' +
-      reason
-    );
-    socket.end();
+    sendSocketError(socket, 403, 'Forbidden', reason);
   }
 
   /**
@@ -259,29 +253,16 @@ export class ConnectHandler {
    */
   private sendRateLimited(socket: Socket, retryAfterMs: number): void {
     const retryAfterSec = Math.ceil(retryAfterMs / 1000);
-    socket.write(
-      'HTTP/1.1 429 Too Many Requests\r\n' +
-      'Content-Type: text/plain\r\n' +
-      `Retry-After: ${retryAfterSec}\r\n` +
-      'Connection: close\r\n' +
-      '\r\n' +
-      'Rate limit exceeded'
-    );
-    socket.end();
+    sendSocketError(socket, 429, 'Too Many Requests', 'Rate limit exceeded', {
+      'Retry-After': String(retryAfterSec),
+    });
   }
 
   /**
    * Send a 502 Bad Gateway response.
    */
   private sendError(socket: Socket, reason: string): void {
-    socket.write(
-      'HTTP/1.1 502 Bad Gateway\r\n' +
-      'Content-Type: text/plain\r\n' +
-      'Connection: close\r\n' +
-      '\r\n' +
-      reason
-    );
-    socket.end();
+    sendSocketError(socket, 502, 'Bad Gateway', reason);
   }
 }
 

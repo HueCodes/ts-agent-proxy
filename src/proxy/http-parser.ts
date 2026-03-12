@@ -222,12 +222,22 @@ export class HttpRequestParser extends EventEmitter {
       throw new HttpParseError('Invalid request line', 'INVALID_REQUEST_LINE');
     }
 
-    this.method = parts[0].toUpperCase();
-    this.path = parts[1];
+    this.method = parts[0]!.toUpperCase();
+    this.path = parts[1]!;
     this.httpVersion = parts.slice(2).join(' ');
 
     // Validate method
-    const validMethods = ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'HEAD', 'OPTIONS', 'CONNECT', 'TRACE'];
+    const validMethods = [
+      'GET',
+      'POST',
+      'PUT',
+      'DELETE',
+      'PATCH',
+      'HEAD',
+      'OPTIONS',
+      'CONNECT',
+      'TRACE',
+    ];
     if (!validMethods.includes(this.method)) {
       throw new HttpParseError(`Invalid HTTP method: ${this.method}`, 'INVALID_METHOD');
     }
@@ -274,8 +284,9 @@ export class HttpRequestParser extends EventEmitter {
       const value = line.substring(colonIndex + 1).trim();
 
       // Handle duplicate headers
-      if (this.headers[name]) {
-        this.headers[name] += ', ' + value;
+      const existingValue = this.headers[name];
+      if (existingValue) {
+        this.headers[name] = existingValue + ', ' + value;
       } else {
         this.headers[name] = value;
       }
@@ -366,7 +377,7 @@ export class HttpRequestParser extends EventEmitter {
     this.buffer = this.buffer.subarray(lineEnd + 2);
 
     // Chunk size may have extensions: size[;extension]
-    const sizeStr = line.split(';')[0].trim();
+    const sizeStr = line.split(';')[0]!.trim();
     this.currentChunkSize = parseInt(sizeStr, 16);
 
     if (isNaN(this.currentChunkSize) || this.currentChunkSize < 0) {
@@ -406,7 +417,7 @@ export class HttpRequestParser extends EventEmitter {
     if (this.currentChunkSize === 0) {
       // Expect \r\n after chunk data
       if (this.buffer.length >= 2) {
-        if (this.buffer[0] !== 0x0d || this.buffer[1] !== 0x0a) {
+        if (this.buffer[0]! !== 0x0d || this.buffer[1]! !== 0x0a) {
           throw new HttpParseError('Missing CRLF after chunk data', 'INVALID_CHUNK_FORMAT');
         }
         this.buffer = this.buffer.subarray(2);
@@ -441,7 +452,7 @@ export class HttpRequestParser extends EventEmitter {
    */
   private findLineEnd(): number {
     for (let i = 0; i < this.buffer.length - 1; i++) {
-      if (this.buffer[i] === 0x0d && this.buffer[i + 1] === 0x0a) {
+      if (this.buffer[i]! === 0x0d && this.buffer[i + 1]! === 0x0a) {
         return i;
       }
     }
@@ -455,7 +466,7 @@ export class HttpRequestParser extends EventEmitter {
  */
 export function parseHttpRequest(
   data: Buffer,
-  options?: { maxHeaderSize?: number; maxBodySize?: number }
+  options?: { maxHeaderSize?: number; maxBodySize?: number },
 ): ParsedHttpRequest | null {
   const parser = new HttpRequestParser(options);
   parser.write(data);
@@ -470,9 +481,10 @@ export function parseHttpRequest(
 /**
  * Create an HTTP request parser.
  */
-export function createHttpRequestParser(
-  options?: { maxHeaderSize?: number; maxBodySize?: number }
-): HttpRequestParser {
+export function createHttpRequestParser(options?: {
+  maxHeaderSize?: number;
+  maxBodySize?: number;
+}): HttpRequestParser {
   return new HttpRequestParser(options);
 }
 
@@ -488,7 +500,10 @@ export function serializeHttpRequest(request: ParsedHttpRequest): Buffer {
   // Headers
   for (const [name, value] of Object.entries(request.headers)) {
     // Capitalize header names
-    const capitalizedName = name.replace(/(^|-)([a-z])/g, (_, prefix, char) => prefix + char.toUpperCase());
+    const capitalizedName = name.replace(
+      /(^|-)([a-z])/g,
+      (_, prefix, char) => prefix + char.toUpperCase(),
+    );
     lines.push(`${capitalizedName}: ${value}`);
   }
 

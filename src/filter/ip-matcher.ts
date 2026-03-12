@@ -91,7 +91,7 @@ export class IpMatcher {
    */
   private parseCidr(cidr: string): ParsedCidr | null {
     const parts = cidr.split('/');
-    const ip = parts[0];
+    const ip = parts[0]!;
     const prefixStr = parts[1];
 
     // Determine if IPv4 or IPv6
@@ -123,7 +123,9 @@ export class IpMatcher {
       } else if (prefix === 128) {
         mask = (BigInt(1) << BigInt(128)) - BigInt(1);
       } else {
-        mask = ((BigInt(1) << BigInt(128)) - BigInt(1)) ^ ((BigInt(1) << BigInt(128 - prefix)) - BigInt(1));
+        mask =
+          ((BigInt(1) << BigInt(128)) - BigInt(1)) ^
+          ((BigInt(1) << BigInt(128 - prefix)) - BigInt(1));
       }
     } else {
       if (prefix === 0) {
@@ -196,8 +198,8 @@ export class IpMatcher {
       const parts = ip.split('::');
       if (parts.length > 2) return null;
 
-      const left = parts[0] ? parts[0].split(':') : [];
-      const right = parts[1] ? parts[1].split(':') : [];
+      const left = parts[0] ? parts[0]!.split(':') : [];
+      const right = parts[1] ? parts[1]!.split(':') : [];
       const missing = 8 - left.length - right.length;
 
       if (missing < 0) return null;
@@ -278,7 +280,7 @@ export function matchesIp(ip: string, patterns: string[]): boolean {
 export function matchesIpWithExclusion(
   ip: string,
   allowList?: string[],
-  excludeList?: string[]
+  excludeList?: string[],
 ): boolean {
   // If no allow list, allow all (unless excluded)
   if (!allowList || allowList.length === 0) {

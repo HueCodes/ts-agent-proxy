@@ -6,7 +6,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { createProxyServer, type ProxyServer } from './server.js';
+import { createProxyServer } from './server.js';
 import { createDefaultConfig, type ProxyConfig } from './types/config.js';
 import type { AllowlistConfig } from './types/allowlist.js';
 import { createLogger } from './logging/logger.js';
@@ -24,7 +24,12 @@ export { createAuditLogger, AuditLogger } from './logging/audit-logger.js';
 export { createAllowlistMatcher, AllowlistMatcher } from './filter/allowlist-matcher.js';
 export { createDomainMatcher, DomainMatcher } from './filter/domain-matcher.js';
 export { createRateLimiter, RateLimiter } from './filter/rate-limiter.js';
-export { createIpMatcher, IpMatcher, matchesIp, matchesIpWithExclusion } from './filter/ip-matcher.js';
+export {
+  createIpMatcher,
+  IpMatcher,
+  matchesIp,
+  matchesIpWithExclusion,
+} from './filter/ip-matcher.js';
 export { createCertManager, CertManager } from './proxy/mitm/cert-manager.js';
 export * from './integration/wasm-bridge.js';
 
@@ -106,7 +111,7 @@ export function loadAllowlistConfig(filePath: string): AllowlistConfig {
   } catch (error) {
     throw new ConfigurationError(
       `Failed to read configuration file: ${error instanceof Error ? error.message : 'Unknown error'}`,
-      filePath
+      filePath,
     );
   }
 
@@ -116,10 +121,7 @@ export function loadAllowlistConfig(filePath: string): AllowlistConfig {
 /**
  * Load full proxy configuration.
  */
-export function loadProxyConfig(
-  serverConfigPath?: string,
-  allowlistPath?: string
-): ProxyConfig {
+export function loadProxyConfig(serverConfigPath?: string, allowlistPath?: string): ProxyConfig {
   const config = createDefaultConfig();
 
   if (allowlistPath && fs.existsSync(allowlistPath)) {
@@ -130,57 +132,108 @@ export function loadProxyConfig(
 }
 
 /**
+ * Read package version from package.json.
+ */
+function getVersion(): string {
+  try {
+    const pkgPath = path.join(
+      path.dirname(new URL(import.meta.url).pathname),
+      '..',
+      'package.json',
+    );
+    const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf-8'));
+    return pkg.version ?? '0.0.0';
+  } catch {
+    return '0.0.0';
+  }
+}
+
+/**
  * CLI entry point.
  */
 async function main(): Promise<void> {
   const logger = createLogger({ level: 'info', pretty: true });
+  const version = getVersion();
 
   // Parse command line arguments
   const args = process.argv.slice(2);
-  const configArg = args.find(a => a.startsWith('--config='));
-  const portArg = args.find(a => a.startsWith('--port='));
-  const hostArg = args.find(a => a.startsWith('--host='));
-  const modeArg = args.find(a => a.startsWith('--mode='));
+  const configArg = args.find((a) => a.startsWith('--config='));
+  const portArg = args.find((a) => a.startsWith('--port='));
+  const hostArg = args.find((a) => a.startsWith('--host='));
+  const modeArg = args.find((a) => a.startsWith('--mode='));
   const watchArg = args.includes('--watch');
-  const adminArg = args.find(a => a.startsWith('--admin-port='));
+  const adminArg = args.find((a) => a.startsWith('--admin-port='));
+
+  // Startup diagnostics
+  logger.info(
+    {
+      version,
+      nodeVersion: process.version,
+      platform: process.platform,
+      arch: process.arch,
+      pid: process.pid,
+    },
+    'ts-agent-proxy starting',
+  );
 
   // Load configuration
   const config = createDefaultConfig();
 
   // Determine allowlist path
   const allowlistPath = configArg
-    ? configArg.split('=')[1]
+    ? configArg.split('=')[1]!
     : path.join(process.cwd(), 'config', 'allowlist.json');
 
   // Load allowlist from default location if exists
   if (fs.existsSync(allowlistPath)) {
     try {
       config.allowlist = loadAllowlistConfig(allowlistPath);
-      logger.info({ path: allowlistPath }, 'Loaded allowlist configuration');
+      logger.info(
+        { path: allowlistPath, rulesCount: config.allowlist.rules.length },
+        'Loaded allowlist configuration',
+      );
     } catch (error) {
-      logger.error({ error, path: allowlistPath }, 'Failed to load allowlist');
+      logger.error({ error, path: allowlistPath }, 'Failed to load allowlist configuration');
+      process.exit(1);
     }
+  } else if (configArg) {
+    // User explicitly specified a config file that doesn't exist
+    logger.error({ path: allowlistPath }, 'Configuration file not found');
+    process.exit(1);
   }
 
   // Override with command line arguments
   if (portArg) {
-    config.server.port = parseInt(portArg.split('=')[1], 10);
+    const port = parseInt(portArg.split('=')[1]!, 10);
+    if (isNaN(port) || port < 0 || port > 65535) {
+      logger.error({ port: portArg.split('=')[1]! }, 'Invalid port number');
+      process.exit(1);
+    }
+    config.server.port = port;
   }
   if (hostArg) {
-    config.server.host = hostArg.split('=')[1];
+    config.server.host = hostArg.split('=')[1]!;
   }
   if (modeArg) {
-    const mode = modeArg.split('=')[1];
+    const mode = modeArg.split('=')[1]!;
     if (mode === 'tunnel' || mode === 'mitm') {
       config.server.mode = mode;
+    } else {
+      logger.error({ mode }, 'Invalid proxy mode (must be "tunnel" or "mitm")');
+      process.exit(1);
     }
   }
 
   // Enable admin server if port specified
   if (adminArg) {
+    const adminPort = parseInt(adminArg.split('=')[1]!, 10);
+    if (isNaN(adminPort) || adminPort < 0 || adminPort > 65535) {
+      logger.error({ port: adminArg.split('=')[1]! }, 'Invalid admin port number');
+      process.exit(1);
+    }
     config.server.admin = {
       enabled: true,
-      port: parseInt(adminArg.split('=')[1], 10),
+      port: adminPort,
       host: '127.0.0.1',
     };
   }
@@ -190,19 +243,35 @@ async function main(): Promise<void> {
 
   // Config watcher cleanup function
   let stopWatching: (() => void) | undefined;
+  let isShuttingDown = false;
 
   // Handle shutdown gracefully
-  const shutdown = async () => {
-    logger.info('Shutting down...');
+  const shutdown = async (signal: string) => {
+    if (isShuttingDown) return;
+    isShuttingDown = true;
+
+    logger.info({ signal }, 'Received shutdown signal');
     if (stopWatching) {
       stopWatching();
+      logger.info('Config watcher stopped');
     }
     await server.stop();
     process.exit(0);
   };
 
-  process.on('SIGINT', shutdown);
-  process.on('SIGTERM', shutdown);
+  process.on('SIGINT', () => shutdown('SIGINT'));
+  process.on('SIGTERM', () => shutdown('SIGTERM'));
+
+  // Handle uncaught errors
+  process.on('unhandledRejection', (reason) => {
+    logger.error({ error: reason }, 'Unhandled promise rejection');
+    process.exit(1);
+  });
+
+  process.on('uncaughtException', (error) => {
+    logger.error({ error }, 'Uncaught exception');
+    process.exit(1);
+  });
 
   try {
     await server.start();
@@ -224,20 +293,27 @@ async function main(): Promise<void> {
       logger.info({ path: allowlistPath }, 'Watching configuration for changes');
     }
 
+    // Log ready state with configuration summary
     logger.info(
       {
-        rulesCount: config.allowlist.rules.length,
+        host: config.server.host,
+        port: config.server.port,
         mode: config.server.mode,
-        watching: watchArg,
+        rulesCount: config.allowlist.rules.length,
+        adminEnabled: !!config.server.admin?.enabled,
+        adminPort: config.server.admin?.port,
+        configWatch: watchArg,
       },
-      'Proxy ready'
+      'Proxy ready',
     );
 
-    // Print CA certificate path if in MITM mode
+    // Print CA certificate info if in MITM mode
     if (config.server.mode === 'mitm') {
       const caCert = server.getCaCertPem();
       if (caCert) {
-        logger.info('MITM mode enabled. Install the CA certificate to trust intercepted connections.');
+        logger.info(
+          'MITM mode enabled. Install the CA certificate to trust intercepted connections.',
+        );
       }
     }
   } catch (error) {

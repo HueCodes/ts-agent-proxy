@@ -62,9 +62,7 @@ export class AdminAuth {
 
     // Check if this endpoint requires authentication
     const protectedEndpoints = this.config.protectedEndpoints ?? ['/metrics', '/config'];
-    const isProtected = protectedEndpoints.some(
-      (ep) => path === ep || path.startsWith(ep + '/')
-    );
+    const isProtected = protectedEndpoints.some((ep) => path === ep || path.startsWith(ep + '/'));
 
     if (!isProtected) {
       return { authenticated: true, identity: 'public' };
@@ -102,14 +100,14 @@ export class AdminAuth {
     }
 
     const parts = authHeader.split(' ');
-    if (parts.length !== 2 || parts[0].toLowerCase() !== 'bearer') {
+    if (parts.length !== 2 || parts[0]!.toLowerCase() !== 'bearer') {
       return {
         authenticated: false,
         reason: 'Invalid Authorization header format',
       };
     }
 
-    const token = parts[1];
+    const token = parts[1]!;
 
     // Constant-time comparison to prevent timing attacks
     if (!this.config.bearerToken || !this.secureCompare(token, this.config.bearerToken)) {
@@ -174,7 +172,12 @@ export class AdminAuth {
     if (ip === '127.0.0.1' || ip === '::1' || ip === 'localhost') {
       // Check if localhost is in allowlist
       for (const pattern of this.config.allowedIps ?? []) {
-        if (pattern === '127.0.0.1' || pattern === '::1' || pattern === 'localhost' || pattern === '127.0.0.1/8') {
+        if (
+          pattern === '127.0.0.1' ||
+          pattern === '::1' ||
+          pattern === 'localhost' ||
+          pattern === '127.0.0.1/8'
+        ) {
           return true;
         }
       }
@@ -199,21 +202,23 @@ export class AdminAuth {
     for (const pattern of patterns) {
       if (pattern.includes('/')) {
         // CIDR notation - create a simple prefix match for common cases
-        const [baseIp, prefixLength] = pattern.split('/');
+        const cidrParts = pattern.split('/');
+        const baseIp = cidrParts[0]!;
+        const prefixLength = cidrParts[1]!;
         const prefix = parseInt(prefixLength, 10);
 
         if (prefix === 8) {
           // /8 - match first octet
-          const firstOctet = baseIp.split('.')[0];
+          const firstOctet = baseIp.split('.')[0]!;
           compiled.push(new RegExp(`^${firstOctet}\\.`));
         } else if (prefix === 16) {
           // /16 - match first two octets
-          const [first, second] = baseIp.split('.');
-          compiled.push(new RegExp(`^${first}\\.${second}\\.`));
+          const octets16 = baseIp.split('.');
+          compiled.push(new RegExp(`^${octets16[0]!}\\.${octets16[1]!}\\.`));
         } else if (prefix === 24) {
           // /24 - match first three octets
-          const [first, second, third] = baseIp.split('.');
-          compiled.push(new RegExp(`^${first}\\.${second}\\.${third}\\.`));
+          const octets24 = baseIp.split('.');
+          compiled.push(new RegExp(`^${octets24[0]!}\\.${octets24[1]!}\\.${octets24[2]!}\\.`));
         } else if (prefix === 32) {
           // /32 - exact match
           compiled.push(new RegExp(`^${this.escapeRegex(baseIp)}$`));
@@ -277,7 +282,7 @@ export class AdminAuth {
   private getClientIp(req: IncomingMessage): string {
     const forwarded = req.headers['x-forwarded-for'];
     if (typeof forwarded === 'string') {
-      return forwarded.split(',')[0].trim();
+      return forwarded.split(',')[0]!.trim();
     }
     return req.socket.remoteAddress ?? 'unknown';
   }

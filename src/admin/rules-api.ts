@@ -98,7 +98,7 @@ export class RulesApi {
     const pathParts = url.pathname.split('/').filter(Boolean);
 
     // Expected paths: /api/rules, /api/rules/:id, /api/rules/validate, /api/rules/reload, /api/rules/batch
-    if (pathParts.length < 2 || pathParts[0] !== 'api' || pathParts[1] !== 'rules') {
+    if (pathParts.length < 2 || pathParts[0]! !== 'api' || pathParts[1]! !== 'rules') {
       this.sendError(res, 404, 'Not found');
       return;
     }
@@ -160,7 +160,7 @@ export class RulesApi {
   private async handleListRules(
     _req: IncomingMessage,
     res: ServerResponse,
-    url: URL
+    url: URL,
   ): Promise<void> {
     const config = this.config.allowlistMatcher.getConfig();
     let rules = config.rules;
@@ -171,9 +171,7 @@ export class RulesApi {
     const tag = url.searchParams.get('tag');
 
     if (domain) {
-      rules = rules.filter((r) =>
-        r.domain.toLowerCase().includes(domain.toLowerCase())
-      );
+      rules = rules.filter((r) => r.domain.toLowerCase().includes(domain.toLowerCase()));
     }
 
     if (enabled !== null) {
@@ -209,7 +207,7 @@ export class RulesApi {
   private async handleGetRule(
     _req: IncomingMessage,
     res: ServerResponse,
-    ruleId: string
+    ruleId: string,
   ): Promise<void> {
     const config = this.config.allowlistMatcher.getConfig();
     const rule = config.rules.find((r) => r.id === ruleId);
@@ -231,10 +229,7 @@ export class RulesApi {
   /**
    * Handle POST /api/rules - Create a new rule.
    */
-  private async handleCreateRule(
-    req: IncomingMessage,
-    res: ServerResponse
-  ): Promise<void> {
+  private async handleCreateRule(req: IncomingMessage, res: ServerResponse): Promise<void> {
     const body = await this.readBody(req);
     const rule = this.parseRule(body);
 
@@ -289,7 +284,7 @@ export class RulesApi {
   private async handleUpdateRule(
     req: IncomingMessage,
     res: ServerResponse,
-    ruleId: string
+    ruleId: string,
   ): Promise<void> {
     const body = await this.readBody(req);
     const updates = this.parseRule(body);
@@ -309,7 +304,7 @@ export class RulesApi {
 
     // Merge existing rule with updates (keep ID)
     const updatedRule: AllowlistRule = {
-      ...config.rules[existingIndex],
+      ...config.rules[existingIndex]!,
       ...updates,
       id: ruleId, // Preserve original ID
     };
@@ -350,7 +345,7 @@ export class RulesApi {
   private async handleDeleteRule(
     _req: IncomingMessage,
     res: ServerResponse,
-    ruleId: string
+    ruleId: string,
   ): Promise<void> {
     const config = this.config.allowlistMatcher.getConfig();
     const existingIndex = config.rules.findIndex((r) => r.id === ruleId);
@@ -384,10 +379,7 @@ export class RulesApi {
   /**
    * Handle POST /api/rules/validate - Validate a rule without saving.
    */
-  private async handleValidateRule(
-    req: IncomingMessage,
-    res: ServerResponse
-  ): Promise<void> {
+  private async handleValidateRule(req: IncomingMessage, res: ServerResponse): Promise<void> {
     const body = await this.readBody(req);
     const rule = this.parseRule(body);
 
@@ -410,10 +402,7 @@ export class RulesApi {
   /**
    * Handle POST /api/rules/reload - Reload rules from external source.
    */
-  private async handleReloadRules(
-    _req: IncomingMessage,
-    res: ServerResponse
-  ): Promise<void> {
+  private async handleReloadRules(_req: IncomingMessage, res: ServerResponse): Promise<void> {
     // This endpoint is a placeholder - actual implementation would
     // depend on the config source (file, database, etc.)
     const response: RuleApiResponse = {
@@ -428,10 +417,7 @@ export class RulesApi {
   /**
    * Handle POST /api/rules/batch - Batch operations.
    */
-  private async handleBatchOperations(
-    req: IncomingMessage,
-    res: ServerResponse
-  ): Promise<void> {
+  private async handleBatchOperations(req: IncomingMessage, res: ServerResponse): Promise<void> {
     const body = await this.readBody(req);
     let operations: BatchOperation[];
 
@@ -485,10 +471,7 @@ export class RulesApi {
   /**
    * Execute a single batch operation.
    */
-  private executeBatchOperation(
-    op: BatchOperation,
-    rules: AllowlistRule[]
-  ): BatchOperationResult {
+  private executeBatchOperation(op: BatchOperation, rules: AllowlistRule[]): BatchOperationResult {
     switch (op.operation) {
       case 'create': {
         if (!op.rule) {
@@ -517,7 +500,7 @@ export class RulesApi {
         if (index === -1) {
           return { operation: 'update', success: false, error: 'Rule not found' };
         }
-        const updatedRule = { ...rules[index], ...op.rule, id: op.ruleId };
+        const updatedRule = { ...rules[index]!, ...op.rule, id: op.ruleId };
         const validation = this.validateRule(updatedRule);
         if (!validation.valid) {
           return { operation: 'update', success: false, error: validation.errors.join(', ') };
@@ -568,7 +551,16 @@ export class RulesApi {
       if (!Array.isArray(rule.methods)) {
         errors.push('Methods must be an array');
       } else {
-        const validMethods = ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'HEAD', 'OPTIONS', 'CONNECT'];
+        const validMethods = [
+          'GET',
+          'POST',
+          'PUT',
+          'DELETE',
+          'PATCH',
+          'HEAD',
+          'OPTIONS',
+          'CONNECT',
+        ];
         for (const method of rule.methods) {
           if (!validMethods.includes(method.toUpperCase())) {
             errors.push(`Invalid HTTP method: ${method}`);
@@ -592,7 +584,10 @@ export class RulesApi {
     }
 
     if (rule.rateLimit !== undefined) {
-      if (typeof rule.rateLimit.requestsPerMinute !== 'number' || rule.rateLimit.requestsPerMinute <= 0) {
+      if (
+        typeof rule.rateLimit.requestsPerMinute !== 'number' ||
+        rule.rateLimit.requestsPerMinute <= 0
+      ) {
         errors.push('Rate limit requestsPerMinute must be a positive number');
       }
     }

@@ -65,10 +65,7 @@ function validate<T>(schema: ZodSchema<T>, data: unknown, path?: string): T {
  * });
  * ```
  */
-export function validateAllowlistConfig(
-  config: unknown,
-  path?: string
-): AllowlistConfig {
+export function validateAllowlistConfig(config: unknown, path?: string): AllowlistConfig {
   return validate(AllowlistConfigSchema, config, path);
 }
 
@@ -80,10 +77,7 @@ export function validateAllowlistConfig(
  * @returns The validated server configuration
  * @throws ConfigurationError if validation fails
  */
-export function validateServerConfig(
-  config: unknown,
-  path?: string
-): ServerConfig {
+export function validateServerConfig(config: unknown, path?: string): ServerConfig {
   return validate(ServerConfigSchema, config, path);
 }
 
@@ -103,10 +97,7 @@ export function validateServerConfig(
  * });
  * ```
  */
-export function validateProxyConfig(
-  config: unknown,
-  path?: string
-): ProxyConfig {
+export function validateProxyConfig(config: unknown, path?: string): ProxyConfig {
   return validate(ProxyConfigSchema, config, path);
 }
 
@@ -118,17 +109,14 @@ export function validateProxyConfig(
  * @returns The validated allowlist configuration
  * @throws ConfigurationError if JSON is invalid or validation fails
  */
-export function parseAllowlistConfigJson(
-  json: string,
-  path?: string
-): AllowlistConfig {
+export function parseAllowlistConfigJson(json: string, path?: string): AllowlistConfig {
   let data: unknown;
   try {
     data = JSON.parse(json);
   } catch (error) {
     throw new ConfigurationError(
       `Invalid JSON: ${error instanceof Error ? error.message : 'Parse error'}`,
-      path
+      path,
     );
   }
 
@@ -143,17 +131,14 @@ export function parseAllowlistConfigJson(
  * @returns The validated proxy configuration
  * @throws ConfigurationError if JSON is invalid or validation fails
  */
-export function parseProxyConfigJson(
-  json: string,
-  path?: string
-): ProxyConfig {
+export function parseProxyConfigJson(json: string, path?: string): ProxyConfig {
   let data: unknown;
   try {
     data = JSON.parse(json);
   } catch (error) {
     throw new ConfigurationError(
       `Invalid JSON: ${error instanceof Error ? error.message : 'Parse error'}`,
-      path
+      path,
     );
   }
 

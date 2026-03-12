@@ -7,9 +7,8 @@
  * @module proxy/websocket-handler
  */
 
-import http from 'node:http';
-import https from 'node:https';
 import net from 'node:net';
+import tls from 'node:tls';
 import { URL } from 'node:url';
 import type { IncomingMessage } from 'node:http';
 import type { Socket } from 'node:net';
@@ -99,11 +98,7 @@ export class WebSocketHandler {
   /**
    * Handle a WebSocket upgrade request.
    */
-  async handleUpgrade(
-    req: IncomingMessage,
-    socket: Socket | Duplex,
-    head: Buffer
-  ): Promise<void> {
+  async handleUpgrade(req: IncomingMessage, socket: Socket | Duplex, head: Buffer): Promise<void> {
     const startTime = Date.now();
     this.stats.totalConnections++;
 
@@ -125,7 +120,7 @@ export class WebSocketHandler {
 
     this.config.logger.debug(
       { host: requestInfo.host, path: requestInfo.path },
-      'WebSocket upgrade request'
+      'WebSocket upgrade request',
     );
 
     // Check allowlist
@@ -142,15 +137,11 @@ export class WebSocketHandler {
     // Check rate limit
     const rateLimitResult = await this.config.rateLimiter.consume(
       clientIp,
-      matchResult.matchedRule?.id
+      matchResult.matchedRule?.id,
     );
     if (!rateLimitResult.allowed) {
       this.stats.connectionsRejected++;
-      this.config.auditLogger.logRateLimit(
-        requestInfo,
-        rateLimitResult,
-        matchResult.matchedRule
-      );
+      this.config.auditLogger.logRateLimit(requestInfo, rateLimitResult, matchResult.matchedRule);
       this.rejectUpgrade(socket, 429, 'Too Many Requests');
       return;
     }
@@ -159,10 +150,7 @@ export class WebSocketHandler {
     try {
       await this.proxyWebSocket(req, socket, head, targetUrl, requestInfo, matchResult);
     } catch (error) {
-      this.config.logger.error(
-        { error, host: requestInfo.host },
-        'WebSocket proxy error'
-      );
+      this.config.logger.error({ error, host: requestInfo.host }, 'WebSocket proxy error');
       this.config.auditLogger.logError(requestInfo, error as Error);
       this.rejectUpgrade(socket, 502, 'Bad Gateway: Could not connect to upstream');
     }
@@ -177,7 +165,7 @@ export class WebSocketHandler {
     head: Buffer,
     targetUrl: URL,
     requestInfo: RequestInfo,
-    matchResult: any
+    matchResult: any,
   ): Promise<void> {
     return new Promise((resolve, reject) => {
       const isSecure = targetUrl.protocol === 'wss:' || targetUrl.protocol === 'https:';
@@ -220,7 +208,7 @@ export class WebSocketHandler {
       let upstreamSocket: net.Socket;
 
       if (isSecure) {
-        upstreamSocket = (require('tls') as typeof import('tls')).connect({
+        upstreamSocket = tls.connect({
           ...connectOptions,
           servername: targetUrl.hostname,
         });
@@ -245,10 +233,7 @@ export class WebSocketHandler {
       });
 
       upstreamSocket.on('error', (error) => {
-        this.config.logger.error(
-          { error, host: targetUrl.hostname },
-          'WebSocket upstream error'
-        );
+        this.config.logger.error({ error, host: targetUrl.hostname }, 'WebSocket upstream error');
         reject(error);
       });
 
@@ -270,8 +255,8 @@ export class WebSocketHandler {
             const responseStr = responseHeaders.toString();
             if (!responseStr.includes('101')) {
               this.config.logger.warn(
-                { host: targetUrl.hostname, response: responseStr.split('\r\n')[0] },
-                'WebSocket upgrade failed'
+                { host: targetUrl.hostname, response: responseStr.split('\r\n')[0]! },
+                'WebSocket upgrade failed',
               );
               clientSocket.write(responseHeaders);
               upstreamSocket.destroy();
@@ -317,10 +302,7 @@ export class WebSocketHandler {
       clientSocket.on('close', () => {
         this.stats.activeConnections = Math.max(0, this.stats.activeConnections - 1);
         upstreamSocket.destroy();
-        this.config.logger.debug(
-          { host: targetUrl.hostname },
-          'WebSocket connection closed'
-        );
+        this.config.logger.debug({ host: targetUrl.hostname }, 'WebSocket connection closed');
       });
 
       upstreamSocket.on('close', () => {
@@ -336,7 +318,7 @@ export class WebSocketHandler {
     clientSocket: Socket | Duplex,
     upstreamSocket: net.Socket,
     requestInfo: RequestInfo,
-    matchResult: any
+    matchResult: any,
   ): void {
     // Set idle timeout
     upstreamSocket.setTimeout(this.config.idleTimeout);
@@ -380,8 +362,12 @@ export class WebSocketHandler {
       }
 
       // Check if it's a full URL or just a path
-      if (url.startsWith('http://') || url.startsWith('https://') ||
-          url.startsWith('ws://') || url.startsWith('wss://')) {
+      if (
+        url.startsWith('http://') ||
+        url.startsWith('https://') ||
+        url.startsWith('ws://') ||
+        url.startsWith('wss://')
+      ) {
         return new URL(url);
       }
 
@@ -399,8 +385,8 @@ export class WebSocketHandler {
   private getClientIp(req: IncomingMessage, socket: Socket | Duplex): string {
     const forwarded = req.headers['x-forwarded-for'];
     if (forwarded) {
-      const ips = Array.isArray(forwarded) ? forwarded[0] : forwarded;
-      return ips.split(',')[0].trim();
+      const ips = Array.isArray(forwarded) ? forwarded[0]! : forwarded;
+      return ips.split(',')[0]!.trim();
     }
     return (socket as Socket).remoteAddress ?? 'unknown';
   }
@@ -408,11 +394,7 @@ export class WebSocketHandler {
   /**
    * Reject upgrade request.
    */
-  private rejectUpgrade(
-    socket: Socket | Duplex,
-    statusCode: number,
-    message: string
-  ): void {
+  private rejectUpgrade(socket: Socket | Duplex, statusCode: number, message: string): void {
     const response = [
       `HTTP/1.1 ${statusCode} ${message}`,
       'Content-Type: text/plain',
@@ -457,8 +439,6 @@ export class WebSocketHandler {
 /**
  * Create a WebSocket handler.
  */
-export function createWebSocketHandler(
-  config: WebSocketHandlerConfig
-): WebSocketHandler {
+export function createWebSocketHandler(config: WebSocketHandlerConfig): WebSocketHandler {
   return new WebSocketHandler(config);
 }

@@ -53,7 +53,10 @@ export const AllowlistRuleSchema = z.object({
     .string()
     .min(1, 'Rule ID cannot be empty')
     .max(64, 'Rule ID cannot exceed 64 characters')
-    .regex(/^[a-zA-Z0-9_-]+$/, 'Rule ID can only contain letters, numbers, underscores, and hyphens'),
+    .regex(
+      /^[a-zA-Z0-9_-]+$/,
+      'Rule ID can only contain letters, numbers, underscores, and hyphens',
+    ),
 
   /** Domain pattern to match (exact or wildcard like *.example.com) */
   domain: z
@@ -67,7 +70,10 @@ export const AllowlistRuleSchema = z.object({
   /** HTTP methods to allow (case-insensitive, will be uppercased) */
   methods: z
     .array(
-      z.string().transform((m) => m.toUpperCase()).pipe(HttpMethodSchema)
+      z
+        .string()
+        .transform((m) => m.toUpperCase())
+        .pipe(HttpMethodSchema),
     )
     .optional(),
 
@@ -106,23 +112,25 @@ export const DefaultActionSchema = z.enum(['allow', 'deny']);
 /**
  * Schema for the complete allowlist configuration.
  */
-export const AllowlistConfigSchema = z.object({
-  /** Operating mode: strict (deny by default) or permissive (allow by default) */
-  mode: AllowlistModeSchema,
+export const AllowlistConfigSchema = z
+  .object({
+    /** Operating mode: strict (deny by default) or permissive (allow by default) */
+    mode: AllowlistModeSchema,
 
-  /** Default action when no rule matches */
-  defaultAction: DefaultActionSchema,
+    /** Default action when no rule matches */
+    defaultAction: DefaultActionSchema,
 
-  /** List of allowlist rules */
-  rules: z.array(AllowlistRuleSchema),
-}).refine(
-  (config) => {
-    // Check for duplicate rule IDs
-    const ids = config.rules.map((r) => r.id);
-    return new Set(ids).size === ids.length;
-  },
-  { message: 'Duplicate rule IDs found. Each rule must have a unique ID.' }
-);
+    /** List of allowlist rules */
+    rules: z.array(AllowlistRuleSchema),
+  })
+  .refine(
+    (config) => {
+      // Check for duplicate rule IDs
+      const ids = config.rules.map((r) => r.id);
+      return new Set(ids).size === ids.length;
+    },
+    { message: 'Duplicate rule IDs found. Each rule must have a unique ID.' },
+  );
 
 /**
  * Schema for proxy mode.
@@ -196,16 +204,36 @@ export const LoggingConfigSchema = z.object({
  */
 export const LimitsConfigSchema = z.object({
   /** Maximum request body size in bytes (default: 10MB) */
-  maxRequestBodySize: z.number().int().positive().max(1024 * 1024 * 1024).default(10 * 1024 * 1024),
+  maxRequestBodySize: z
+    .number()
+    .int()
+    .positive()
+    .max(1024 * 1024 * 1024)
+    .default(10 * 1024 * 1024),
 
   /** Maximum response body size in bytes (default: 50MB) */
-  maxResponseBodySize: z.number().int().positive().max(1024 * 1024 * 1024).default(50 * 1024 * 1024),
+  maxResponseBodySize: z
+    .number()
+    .int()
+    .positive()
+    .max(1024 * 1024 * 1024)
+    .default(50 * 1024 * 1024),
 
   /** Maximum header size in bytes (default: 16KB) */
-  maxHeaderSize: z.number().int().positive().max(1024 * 1024).default(16 * 1024),
+  maxHeaderSize: z
+    .number()
+    .int()
+    .positive()
+    .max(1024 * 1024)
+    .default(16 * 1024),
 
   /** Maximum URL length in bytes (default: 8KB) */
-  maxUrlLength: z.number().int().positive().max(1024 * 1024).default(8 * 1024),
+  maxUrlLength: z
+    .number()
+    .int()
+    .positive()
+    .max(1024 * 1024)
+    .default(8 * 1024),
 
   /** Maximum concurrent connections per client IP (default: 100) */
   maxConcurrentConnectionsPerIp: z.number().int().positive().max(100000).default(100),
@@ -239,42 +267,47 @@ export const AdminAuthMethodSchema = z.enum(['none', 'bearer', 'api-key', 'ip-al
 /**
  * Schema for admin authentication configuration.
  */
-export const AdminAuthConfigSchema = z.object({
-  /** Authentication method */
-  method: AdminAuthMethodSchema.default('none'),
+export const AdminAuthConfigSchema = z
+  .object({
+    /** Authentication method */
+    method: AdminAuthMethodSchema.default('none'),
 
-  /** Bearer token (for 'bearer' method) */
-  bearerToken: z.string().min(16).max(256).optional(),
+    /** Bearer token (for 'bearer' method) */
+    bearerToken: z.string().min(16).max(256).optional(),
 
-  /** API key header name (for 'api-key' method) */
-  apiKeyHeader: z.string().min(1).max(64).default('X-API-Key'),
+    /** API key header name (for 'api-key' method) */
+    apiKeyHeader: z.string().min(1).max(64).default('X-API-Key'),
 
-  /** API key value (for 'api-key' method) */
-  apiKey: z.string().min(16).max(256).optional(),
+    /** API key value (for 'api-key' method) */
+    apiKey: z.string().min(16).max(256).optional(),
 
-  /** Allowed IPs (for 'ip-allowlist' method, CIDR notation supported) */
-  allowedIps: z.array(z.string()).optional(),
+    /** Allowed IPs (for 'ip-allowlist' method, CIDR notation supported) */
+    allowedIps: z.array(z.string()).optional(),
 
-  /** Endpoints that require authentication */
-  protectedEndpoints: z.array(z.string()).default(['/metrics', '/config']),
+    /** Endpoints that require authentication */
+    protectedEndpoints: z.array(z.string()).default(['/metrics', '/config']),
 
-  /** Rate limit for admin endpoints (requests per minute) */
-  rateLimitPerMinute: z.number().int().positive().max(1000).default(60),
-}).refine(
-  (config) => {
-    if (config.method === 'bearer' && !config.bearerToken) {
-      return false;
-    }
-    if (config.method === 'api-key' && !config.apiKey) {
-      return false;
-    }
-    if (config.method === 'ip-allowlist' && (!config.allowedIps || config.allowedIps.length === 0)) {
-      return false;
-    }
-    return true;
-  },
-  { message: 'Authentication method requires corresponding credentials to be configured' }
-);
+    /** Rate limit for admin endpoints (requests per minute) */
+    rateLimitPerMinute: z.number().int().positive().max(1000).default(60),
+  })
+  .refine(
+    (config) => {
+      if (config.method === 'bearer' && !config.bearerToken) {
+        return false;
+      }
+      if (config.method === 'api-key' && !config.apiKey) {
+        return false;
+      }
+      if (
+        config.method === 'ip-allowlist' &&
+        (!config.allowedIps || config.allowedIps.length === 0)
+      ) {
+        return false;
+      }
+      return true;
+    },
+    { message: 'Authentication method requires corresponding credentials to be configured' },
+  );
 
 /**
  * Schema for admin server configuration.

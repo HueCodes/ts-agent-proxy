@@ -35,7 +35,7 @@ export function createLogger(options: LoggerOptions = {}): Logger {
       name,
       level,
     },
-    transport
+    transport,
   );
 }
 

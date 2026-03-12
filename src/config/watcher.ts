@@ -7,7 +7,6 @@
  */
 
 import fs from 'node:fs';
-import path from 'node:path';
 import type { AllowlistConfig } from '../types/allowlist.js';
 import { parseAllowlistConfigJson } from '../validation/validator.js';
 import type { Logger } from '../logging/logger.js';
@@ -169,7 +168,7 @@ export class ConfigWatcher {
 
       logger?.info(
         { path: filePath, rulesCount: config.rules.length },
-        'Configuration file reloaded'
+        'Configuration file reloaded',
       );
 
       onReload(config);

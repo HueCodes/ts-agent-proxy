@@ -11,6 +11,7 @@ import http from 'node:http';
 import type { Duplex } from 'node:stream';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { Socket } from 'node:net';
+import { generateRequestId, sendJsonError } from './proxy/size-limiter.js';
 import type { ProxyConfig } from './types/config.js';
 import type { AllowlistConfig } from './types/allowlist.js';
 import { createLogger, type Logger } from './logging/logger.js';
@@ -21,7 +22,7 @@ import { createConnectHandler, type ConnectHandler } from './proxy/connect-handl
 import { createForwardProxy, type ForwardProxy } from './proxy/forward-proxy.js';
 import { createCertManager, type CertManager } from './proxy/mitm/cert-manager.js';
 import { createMitmInterceptor, type MitmInterceptor } from './proxy/mitm/interceptor.js';
-import { createWebSocketHandler, WebSocketHandler, type WebSocketHandlerConfig } from './proxy/websocket-handler.js';
+import { createWebSocketHandler, WebSocketHandler } from './proxy/websocket-handler.js';
 import { createMetricsCollector, type MetricsCollector } from './admin/metrics.js';
 import { createAdminServer, type AdminServer } from './admin/admin-server.js';
 
@@ -59,6 +60,9 @@ export class ProxyServer {
   private readonly adminServer?: AdminServer;
   private server?: http.Server;
   private isRunning = false;
+  private isShuttingDown = false;
+  private readonly activeConnections = new Set<Socket>();
+  private readonly shutdownTimeout: number;
 
   /**
    * Creates a new ProxyServer.
@@ -67,16 +71,20 @@ export class ProxyServer {
    */
   constructor(options: ProxyServerOptions) {
     this.config = options.config;
-    this.logger = options.logger ?? createLogger({
-      level: this.config.server.logging.level,
-      pretty: this.config.server.logging.pretty,
-    });
+    this.logger =
+      options.logger ??
+      createLogger({
+        level: this.config.server.logging.level,
+        pretty: this.config.server.logging.pretty,
+      });
 
     this.auditLogger = createAuditLogger({
       filePath: this.config.server.logging.auditLogPath,
       logToMain: true,
       logger: this.logger,
     });
+
+    this.shutdownTimeout = 30000; // 30 seconds default
 
     this.allowlistMatcher = createAllowlistMatcher(this.config.allowlist);
     this.rateLimiter = createRateLimiter(this.config.allowlist.rules);
@@ -149,6 +157,14 @@ export class ProxyServer {
       this.handleRequest(req, res);
     });
 
+    // Track active connections for graceful shutdown
+    this.server.on('connection', (socket: Socket) => {
+      this.activeConnections.add(socket);
+      socket.on('close', () => {
+        this.activeConnections.delete(socket);
+      });
+    });
+
     this.server.on('connect', (req, socket: Duplex, head) => {
       this.handleConnect(req, socket as Socket, head);
     });
@@ -170,8 +186,12 @@ export class ProxyServer {
       this.server!.listen(this.config.server.port, this.config.server.host, () => {
         this.isRunning = true;
         this.logger.info(
-          { host: this.config.server.host, port: this.config.server.port, mode: this.config.server.mode },
-          'Proxy server started'
+          {
+            host: this.config.server.host,
+            port: this.config.server.port,
+            mode: this.config.server.mode,
+          },
+          'Proxy server started',
         );
         resolve();
       });
@@ -179,44 +199,103 @@ export class ProxyServer {
   }
 
   /**
-   * Stop the proxy server.
+   * Stop the proxy server gracefully.
    *
-   * Stops both the main proxy server and the admin server if running.
+   * 1. Stops accepting new connections
+   * 2. Sets health endpoint to return 503
+   * 3. Waits for in-flight requests to complete (up to shutdownTimeout)
+   * 4. Destroys remaining connections and cleans up
    *
    * @returns Promise that resolves when server is stopped
    */
   async stop(): Promise<void> {
+    if (this.isShuttingDown) return;
+    this.isShuttingDown = true;
+
+    this.logger.info(
+      { activeConnections: this.activeConnections.size },
+      'Graceful shutdown initiated, stopping new connections',
+    );
+
+    // Mark as not ready so health probes return 503
     this.isRunning = false;
 
-    // Stop admin server first
-    if (this.adminServer) {
-      await this.adminServer.stop();
+    // Destroy the forward proxy connection pool
+    this.forwardProxy.destroy();
+    this.logger.info('Connection pool destroyed');
+
+    if (!this.server) {
+      // Stop admin server if proxy server wasn't started
+      if (this.adminServer) {
+        await this.adminServer.stop();
+      }
+      return;
     }
 
-    if (!this.server) return;
-
-    return new Promise((resolve, reject) => {
-      this.server!.close((err) => {
-        if (err) {
-          this.logger.error({ error: err }, 'Error stopping server');
-          reject(err);
-        } else {
-          this.logger.info('Proxy server stopped');
-          resolve();
+    // Stop accepting new connections and wait for in-flight requests
+    await new Promise<void>((resolve) => {
+      const forceShutdownTimer = setTimeout(() => {
+        this.logger.warn(
+          { remainingConnections: this.activeConnections.size },
+          'Shutdown timeout reached, forcing remaining connections closed',
+        );
+        for (const socket of this.activeConnections) {
+          socket.destroy();
         }
+        this.activeConnections.clear();
+        resolve();
+      }, this.shutdownTimeout);
+
+      // Prevent the timer from keeping the process alive
+      forceShutdownTimer.unref();
+
+      this.server!.close((err) => {
+        clearTimeout(forceShutdownTimer);
+        if (err) {
+          this.logger.error({ error: err }, 'Error during server close');
+        }
+        resolve();
       });
+
+      // Close idle connections (those without active requests)
+      for (const socket of this.activeConnections) {
+        if (!socket.writableLength) {
+          socket.end();
+        }
+      }
     });
+
+    // Stop admin server after proxy is done
+    if (this.adminServer) {
+      await this.adminServer.stop();
+      this.logger.info('Admin server stopped');
+    }
+
+    this.logger.info('Proxy server stopped');
   }
 
   /**
    * Handle regular HTTP requests.
    */
   private handleRequest(req: IncomingMessage, res: ServerResponse): void {
+    if (this.isShuttingDown) {
+      sendJsonError(
+        res,
+        503,
+        'SERVICE_UNAVAILABLE',
+        'Server is shutting down',
+        generateRequestId(),
+        {
+          'Retry-After': '5',
+        },
+      );
+      return;
+    }
+
     this.forwardProxy.handleRequest(req, res).catch((error) => {
       this.logger.error({ error }, 'Request handling error');
       if (!res.headersSent) {
-        res.writeHead(500, { 'Content-Type': 'text/plain' });
-        res.end('Internal server error');
+        sendJsonError(res, 500, 'INTERNAL_ERROR', 'Internal server error');
       }
     });
   }

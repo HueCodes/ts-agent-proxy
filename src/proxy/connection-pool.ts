@@ -148,7 +148,7 @@ export class ConnectionPool {
       agent.on('free', (socket, options) => {
         this.logger?.debug(
           { host: options.host, port: options.port, protocol },
-          'Socket returned to pool'
+          'Socket returned to pool',
         );
       });
 
@@ -322,7 +322,9 @@ export class ConnectionPool {
    * Get the number of pending requests across all agents.
    */
   private getPendingRequests(): number {
-    return this.getAgentPendingRequests(this.httpAgent) + this.getAgentPendingRequests(this.httpsAgent);
+    return (
+      this.getAgentPendingRequests(this.httpAgent) + this.getAgentPendingRequests(this.httpsAgent)
+    );
   }
 
   /**
@@ -355,7 +357,7 @@ export class ConnectionPool {
  */
 export function createConnectionPool(
   config?: Partial<ConnectionPoolConfig>,
-  logger?: Logger
+  logger?: Logger,
 ): ConnectionPool {
   return new ConnectionPool(config, logger);
 }
