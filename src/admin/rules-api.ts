@@ -44,10 +44,10 @@ export interface RuleValidationResult {
 export interface RuleApiResponse {
   success: boolean;
   message: string;
-  rule?: AllowlistRule;
-  rules?: AllowlistRule[];
-  count?: number;
-  errors?: string[];
+  rule?: AllowlistRule | undefined;
+  rules?: AllowlistRule[] | undefined;
+  count?: number | undefined;
+  errors?: string[] | undefined;
 }
 
 /**

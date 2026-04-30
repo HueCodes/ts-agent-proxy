@@ -33,15 +33,15 @@ export const DEFAULT_CERT_CACHE_CONFIG: CertCacheConfig = {
 
 export interface CertManagerOptions {
   /** Path to CA certificate */
-  caCertPath?: string;
+  caCertPath?: string | undefined;
   /** Path to CA private key */
-  caKeyPath?: string;
+  caKeyPath?: string | undefined;
   /** Auto-generate CA if not provided */
-  autoGenerate?: boolean;
+  autoGenerate?: boolean | undefined;
   /** Directory to cache generated certificates */
-  cacheDir?: string;
+  cacheDir?: string | undefined;
   /** Certificate cache configuration */
-  cacheConfig?: Partial<CertCacheConfig>;
+  cacheConfig?: Partial<CertCacheConfig> | undefined;
 }
 
 export class CertManager {

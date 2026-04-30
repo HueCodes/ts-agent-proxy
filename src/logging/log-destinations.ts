@@ -85,7 +85,7 @@ export interface WebhookDestinationConfig {
 export class FileDestination implements LogDestination {
   readonly name = 'file';
   private readonly config: Required<FileDestinationConfig>;
-  private stream?: fs.WriteStream;
+  private stream: fs.WriteStream | undefined;
   private currentSize = 0;
   private rotationIndex = 0;
 
@@ -106,16 +106,23 @@ export class FileDestination implements LogDestination {
       fs.mkdirSync(dir, { recursive: true });
     }
 
-    // Check existing file size
     if (fs.existsSync(this.config.path)) {
       const stats = fs.statSync(this.config.path);
       this.currentSize = stats.size;
+    } else {
+      this.currentSize = 0;
     }
 
-    this.stream = fs.createWriteStream(this.config.path, {
+    const stream = fs.createWriteStream(this.config.path, {
       flags: 'a',
       encoding: 'utf-8',
     });
+    // Surface errors without crashing the process. A missing log file or
+    // permissions issue should not take down the proxy.
+    stream.on('error', (err) => {
+      console.error(`audit log file destination error: ${err.message}`);
+    });
+    this.stream = stream;
   }
 
   write(entry: string): void {
@@ -162,14 +169,18 @@ export class FileDestination implements LogDestination {
   }
 
   async close(): Promise<void> {
-    return new Promise((resolve, reject) => {
+    return new Promise((resolve) => {
       if (!this.stream) {
         resolve();
         return;
       }
-      this.stream.end((err: Error | null) => {
-        if (err) reject(err);
-        else resolve();
+      const stream = this.stream;
+      this.stream = undefined;
+      stream.end((err: Error | null) => {
+        if (err) {
+          console.error(`audit log file destination close error: ${err.message}`);
+        }
+        resolve();
       });
     });
   }
@@ -212,7 +223,7 @@ export class WebhookDestination implements LogDestination {
   private readonly config: Required<WebhookDestinationConfig>;
   private readonly url: URL;
   private batch: string[] = [];
-  private batchTimer?: NodeJS.Timeout;
+  private batchTimer: NodeJS.Timeout | undefined;
 
   constructor(config: WebhookDestinationConfig) {
     this.config = {

@@ -102,7 +102,7 @@ export type GrpcMetadata = Map<string, string | string[]>;
  */
 export interface GrpcTrailers {
   status: GrpcStatus;
-  message?: string;
+  message?: string | undefined;
   metadata: GrpcMetadata;
 }
 

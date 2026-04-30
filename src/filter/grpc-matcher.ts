@@ -19,9 +19,9 @@ export interface GrpcMatchResult {
   /** Reason for the match decision */
   reason: string;
   /** Matched service pattern (if any) */
-  matchedService?: string;
+  matchedService?: string | undefined;
   /** Matched method pattern (if any) */
-  matchedMethod?: string;
+  matchedMethod?: string | undefined;
 }
 
 /**

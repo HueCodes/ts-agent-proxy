@@ -9,6 +9,12 @@
 
 import type { IncomingHttpHeaders } from 'node:http';
 
+type JsonObject = Record<string, unknown>;
+
+function isJsonObject(value: unknown): value is JsonObject {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
 /**
  * JSON transformation operation types.
  */
@@ -349,7 +355,11 @@ export class BodyTransformer {
     operations: JsonOperation[],
   ): { body: Buffer; modified: boolean } {
     try {
-      const json = JSON.parse(body.toString('utf-8'));
+      const parsed: unknown = JSON.parse(body.toString('utf-8'));
+      if (!isJsonObject(parsed)) {
+        return { body, modified: false };
+      }
+      const json = parsed;
       let modified = false;
 
       for (const op of operations) {
@@ -375,7 +385,7 @@ export class BodyTransformer {
   /**
    * Apply a single JSON operation.
    */
-  private applyJsonOperation(obj: any, op: JsonOperation): boolean {
+  private applyJsonOperation(obj: JsonObject, op: JsonOperation): boolean {
     switch (op.type) {
       case 'set':
         this.setJsonPath(obj, op.path, op.value);
@@ -421,12 +431,12 @@ export class BodyTransformer {
   /**
    * Get value at JSON path.
    */
-  private getJsonPath(obj: any, path: string): any {
+  private getJsonPath(obj: JsonObject, path: string): unknown {
     const parts = path.split('.');
-    let current = obj;
+    let current: unknown = obj;
 
     for (const part of parts) {
-      if (current === null || current === undefined) {
+      if (!isJsonObject(current)) {
         return undefined;
       }
       current = current[part];
@@ -438,16 +448,20 @@ export class BodyTransformer {
   /**
    * Set value at JSON path.
    */
-  private setJsonPath(obj: any, path: string, value: any): void {
+  private setJsonPath(obj: JsonObject, path: string, value: unknown): void {
     const parts = path.split('.');
-    let current = obj;
+    let current: JsonObject = obj;
 
     for (let i = 0; i < parts.length - 1; i++) {
       const part = parts[i]!;
-      if (!(part in current) || current[part] === null) {
-        current[part] = {};
+      const next = current[part];
+      if (!isJsonObject(next)) {
+        const child: JsonObject = {};
+        current[part] = child;
+        current = child;
+      } else {
+        current = next;
       }
-      current = current[part];
     }
 
     current[parts[parts.length - 1]!] = value;
@@ -456,16 +470,17 @@ export class BodyTransformer {
   /**
    * Delete value at JSON path.
    */
-  private deleteJsonPath(obj: any, path: string): boolean {
+  private deleteJsonPath(obj: JsonObject, path: string): boolean {
     const parts = path.split('.');
-    let current = obj;
+    let current: JsonObject = obj;
 
     for (let i = 0; i < parts.length - 1; i++) {
       const part = parts[i]!;
-      if (!(part in current)) {
+      const next = current[part];
+      if (!isJsonObject(next)) {
         return false;
       }
-      current = current[part];
+      current = next;
     }
 
     const lastPart = parts[parts.length - 1]!;

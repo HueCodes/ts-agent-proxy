@@ -25,21 +25,21 @@ export enum CircuitState {
  */
 export interface CircuitBreakerConfig {
   /** Number of failures to trip the circuit (default: 5) */
-  failureThreshold?: number;
+  failureThreshold?: number | undefined;
   /** Number of successes in half-open to close (default: 2) */
-  successThreshold?: number;
+  successThreshold?: number | undefined;
   /** Time in ms before trying again (default: 30000) */
-  resetTimeout?: number;
+  resetTimeout?: number | undefined;
   /** Time window in ms to count failures (default: 60000) */
-  failureWindow?: number;
+  failureWindow?: number | undefined;
   /** Maximum concurrent requests in half-open state (default: 1) */
-  halfOpenMaxConcurrent?: number;
+  halfOpenMaxConcurrent?: number | undefined;
   /** Optional callback on state change */
-  onStateChange?: (key: string, oldState: CircuitState, newState: CircuitState) => void;
+  onStateChange?: ((key: string, oldState: CircuitState, newState: CircuitState) => void) | undefined;
   /** Optional callback on failure */
-  onFailure?: (key: string, error: Error) => void;
+  onFailure?: ((key: string, error: Error) => void) | undefined;
   /** Optional callback on success */
-  onSuccess?: (key: string, latency: number) => void;
+  onSuccess?: ((key: string, latency: number) => void) | undefined;
 }
 
 /**
@@ -139,10 +139,16 @@ export interface CircuitBreakerResult {
  * ```
  */
 export class CircuitBreaker {
-  private readonly config: Required<
-    Omit<CircuitBreakerConfig, 'onStateChange' | 'onFailure' | 'onSuccess'>
-  > &
-    Pick<CircuitBreakerConfig, 'onStateChange' | 'onFailure' | 'onSuccess'>;
+  private readonly config: {
+    failureThreshold: number;
+    successThreshold: number;
+    resetTimeout: number;
+    failureWindow: number;
+    halfOpenMaxConcurrent: number;
+    onStateChange: CircuitBreakerConfig['onStateChange'];
+    onFailure: CircuitBreakerConfig['onFailure'];
+    onSuccess: CircuitBreakerConfig['onSuccess'];
+  };
   private readonly circuits: Map<string, CircuitEntry> = new Map();
 
   constructor(config: CircuitBreakerConfig = {}) {
@@ -447,7 +453,7 @@ export async function withCircuitBreaker<T>(
     breaker.recordSuccess(key, Date.now() - startTime);
     return value;
   } catch (error) {
-    breaker.recordFailure(key, error as Error);
+    breaker.recordFailure(key, error instanceof Error ? error : new Error(String(error)));
     throw error;
   }
 }
@@ -458,7 +464,7 @@ export async function withCircuitBreaker<T>(
 export class CircuitOpenError extends Error {
   readonly key: string;
   readonly state: CircuitState;
-  readonly resetIn?: number;
+  readonly resetIn: number | undefined;
 
   constructor(key: string, state: CircuitState, resetIn?: number) {
     super(`Circuit breaker open for ${key}`);

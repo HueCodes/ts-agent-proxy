@@ -124,11 +124,11 @@ export interface MultiTenantConfig {
   /** Tenant extractor function */
   tenantExtractor: TenantExtractor;
   /** Default tenant ID for unidentified requests (optional) */
-  defaultTenantId?: string;
+  defaultTenantId?: string | undefined;
   /** Whether to reject requests from unknown tenants */
-  rejectUnknownTenants?: boolean;
+  rejectUnknownTenants?: boolean | undefined;
   /** Initial tenant configurations */
-  tenants?: TenantConfig[];
+  tenants?: TenantConfig[] | undefined;
 }
 
 /**
@@ -205,8 +205,12 @@ export interface TenantStats {
  * ```
  */
 export class MultiTenantManager {
-  private readonly config: Required<Omit<MultiTenantConfig, 'tenants' | 'defaultTenantId'>> &
-    Pick<MultiTenantConfig, 'defaultTenantId'>;
+  private readonly config: {
+    logger: Logger;
+    tenantExtractor: TenantExtractor;
+    defaultTenantId: string | undefined;
+    rejectUnknownTenants: boolean;
+  };
   private readonly tenants: Map<string, TenantContext> = new Map();
   private readonly tenantStats: Map<
     string,

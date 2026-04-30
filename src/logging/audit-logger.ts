@@ -56,7 +56,7 @@ export interface DenialReason {
   /** Human-readable message */
   message: string;
   /** Additional details */
-  details?: Record<string, any>;
+  details?: Record<string, unknown> | undefined;
 }
 
 /**
@@ -80,9 +80,9 @@ export interface AuditLogEntry {
   /** Unique request ID for correlation */
   requestId: string;
   /** Trace ID for distributed tracing correlation */
-  traceId?: string;
+  traceId?: string | undefined;
   /** Span ID for distributed tracing correlation */
-  spanId?: string;
+  spanId?: string | undefined;
   /** Timestamp of the event */
   timestamp: string;
   /** Type of event */
@@ -92,27 +92,27 @@ export interface AuditLogEntry {
   /** Request information */
   request: RequestInfo;
   /** Response information */
-  response?: ResponseInfo;
+  response?: ResponseInfo | undefined;
   /** Headers (if logging enabled, redacted) */
-  headers?: Record<string, string>;
+  headers?: Record<string, string> | undefined;
   /** Response headers (if logging enabled, redacted) */
-  responseHeaders?: Record<string, string>;
+  responseHeaders?: Record<string, string> | undefined;
   /** Request body (if logging enabled, truncated) */
-  body?: string;
+  body?: string | undefined;
   /** Match result */
-  matchResult?: MatchResult;
+  matchResult?: MatchResult | undefined;
   /** Rate limit result */
-  rateLimitResult?: RateLimitResult;
+  rateLimitResult?: RateLimitResult | undefined;
   /** Structured denial reason */
-  denialReason?: DenialReason;
+  denialReason?: DenialReason | undefined;
   /** Error message if applicable */
-  errorMessage?: string;
+  errorMessage?: string | undefined;
   /** Request duration in milliseconds */
-  durationMs?: number;
+  durationMs?: number | undefined;
   /** Bytes sent */
-  bytesSent?: number;
+  bytesSent?: number | undefined;
   /** Bytes received */
-  bytesReceived?: number;
+  bytesReceived?: number | undefined;
 }
 
 /**
@@ -155,31 +155,31 @@ export const DEFAULT_PII_PATTERNS = [
  */
 export interface AuditLoggerOptions {
   /** Path to the audit log file (legacy, use destinations instead) */
-  filePath?: string;
+  filePath?: string | undefined;
   /** Log destinations (file, console, webhook, etc.) */
-  destinations?: LogDestination[];
+  destinations?: LogDestination[] | undefined;
   /** Whether to also log to the main logger */
-  logToMain?: boolean;
+  logToMain?: boolean | undefined;
   /** Main logger instance */
-  logger?: Logger;
+  logger?: Logger | undefined;
   /** Default logging level */
-  loggingLevel?: LoggingLevel;
+  loggingLevel?: LoggingLevel | undefined;
   /** Whether to log request headers (deprecated, use loggingLevel) */
-  logHeaders?: boolean;
+  logHeaders?: boolean | undefined;
   /** Whether to log request body (deprecated, use loggingLevel) */
-  logBody?: boolean;
+  logBody?: boolean | undefined;
   /** Maximum body size to log in bytes */
-  maxBodyLogSize?: number;
+  maxBodyLogSize?: number | undefined;
   /** Headers to redact (case-insensitive) */
-  redactHeaders?: string[];
+  redactHeaders?: string[] | undefined;
   /** PII scrubbing configuration */
-  piiScrubbing?: PiiScrubbingConfig;
+  piiScrubbing?: PiiScrubbingConfig | undefined;
   /** Sampling rate (0.0 to 1.0, default: 1.0 = log all) */
-  samplingRate?: number;
+  samplingRate?: number | undefined;
   /** Only log requests with these status codes */
-  logStatusCodes?: number[];
+  logStatusCodes?: number[] | undefined;
   /** Log response headers */
-  logResponseHeaders?: boolean;
+  logResponseHeaders?: boolean | undefined;
 }
 
 /**
@@ -207,21 +207,24 @@ export interface AuditLoggerOptions {
  * ```
  */
 export class AuditLogger {
-  private readonly options: Required<
-    Omit<
-      AuditLoggerOptions,
-      'filePath' | 'logger' | 'destinations' | 'piiScrubbing' | 'logStatusCodes'
-    >
-  > & {
-    filePath?: string;
-    logger?: Logger;
+  private readonly options: {
+    filePath: string | undefined;
     destinations: LogDestination[];
-    piiScrubbing?: PiiScrubbingConfig;
-    logStatusCodes?: number[];
+    logToMain: boolean;
+    logger: Logger | undefined;
+    loggingLevel: LoggingLevel;
+    logHeaders: boolean;
+    logBody: boolean;
+    maxBodyLogSize: number;
+    redactHeaders: string[];
+    piiScrubbing: PiiScrubbingConfig | undefined;
+    samplingRate: number;
+    logStatusCodes: number[] | undefined;
+    logResponseHeaders: boolean;
   };
   private readonly redactHeadersLower: Set<string>;
   private readonly piiPatterns: RegExp[];
-  private writeStream?: fs.WriteStream;
+  private writeStream: fs.WriteStream | undefined;
 
   /**
    * Creates a new AuditLogger.
@@ -282,10 +285,16 @@ export class AuditLogger {
       fs.mkdirSync(dir, { recursive: true });
     }
 
-    this.writeStream = fs.createWriteStream(this.options.filePath, {
+    const stream = fs.createWriteStream(this.options.filePath, {
       flags: 'a',
       encoding: 'utf-8',
     });
+    // Audit logging must never crash the proxy. A missing log file or
+    // permissions issue gets surfaced via the main logger if available.
+    stream.on('error', (err) => {
+      this.options.logger?.error({ err, path: this.options.filePath }, 'audit log file error');
+    });
+    this.writeStream = stream;
   }
 
   /**
@@ -329,7 +338,7 @@ export class AuditLogger {
   createDenialReason(
     code: DenialReasonCode,
     message: string,
-    details?: Record<string, any>,
+    details?: Record<string, unknown>,
   ): DenialReason {
     return { code, message, details };
   }

@@ -12,11 +12,11 @@ export interface RateLimitConfig {
  */
 export interface HeaderTransform {
   /** Headers to add or overwrite */
-  set?: Record<string, string>;
+  set?: Record<string, string> | undefined;
   /** Headers to remove */
-  remove?: string[];
+  remove?: string[] | undefined;
   /** Headers to rename (oldName -> newName) */
-  rename?: Record<string, string>;
+  rename?: Record<string, string> | undefined;
 }
 
 /**
@@ -31,13 +31,13 @@ export interface RuleLoggingConfig {
   /** Logging level for this rule */
   level: RuleLoggingLevel;
   /** Sampling rate (0.0 to 1.0, default: 1.0) */
-  samplingRate?: number;
+  samplingRate?: number | undefined;
   /** Log only these status codes */
-  statusCodes?: number[];
+  statusCodes?: number[] | undefined;
   /** Log request body for specific content types */
-  bodyContentTypes?: string[];
+  bodyContentTypes?: string[] | undefined;
   /** Include response headers */
-  includeResponseHeaders?: boolean;
+  includeResponseHeaders?: boolean | undefined;
 }
 
 /**
@@ -48,35 +48,35 @@ export interface GrpcRuleConfig {
    * Allowed gRPC services (e.g., ["myapp.UserService", "myapp.OrderService"]).
    * Supports wildcards (e.g., "myapp.*" matches all services in myapp package).
    */
-  services?: string[];
+  services?: string[] | undefined;
   /**
    * Allowed gRPC methods in full format (e.g., ["myapp.UserService/GetUser"]).
    * More specific than services - use for fine-grained control.
    */
-  methods?: string[];
+  methods?: string[] | undefined;
   /**
    * Allow gRPC server reflection API (grpc.reflection.v1alpha.ServerReflection).
    * Default: false for security.
    */
-  allowReflection?: boolean;
+  allowReflection?: boolean | undefined;
   /**
    * Allow gRPC health check service (grpc.health.v1.Health).
    * Default: true.
    */
-  allowHealthCheck?: boolean;
+  allowHealthCheck?: boolean | undefined;
   /**
    * Maximum message size in bytes for this rule.
    * Overrides global setting.
    */
-  maxMessageSize?: number;
+  maxMessageSize?: number | undefined;
   /**
    * Maximum concurrent streams per connection for this rule.
    */
-  maxConcurrentStreams?: number;
+  maxConcurrentStreams?: number | undefined;
   /**
    * Separate rate limit for streaming RPCs (requests per minute).
    */
-  streamingRateLimit?: number;
+  streamingRateLimit?: number | undefined;
 }
 
 export interface AllowlistRule {
@@ -85,27 +85,27 @@ export interface AllowlistRule {
   /** Domain to match (exact match or wildcard like *.example.com) */
   domain: string;
   /** Path patterns to allow (glob patterns supported) */
-  paths?: string[];
+  paths?: string[] | undefined;
   /** HTTP methods to allow */
-  methods?: string[];
+  methods?: string[] | undefined;
   /** Rate limiting configuration */
-  rateLimit?: RateLimitConfig;
+  rateLimit?: RateLimitConfig | undefined;
   /** Optional description */
-  description?: string;
+  description?: string | undefined;
   /** Whether the rule is enabled (default: true) */
-  enabled?: boolean;
+  enabled?: boolean | undefined;
   /** Client IPs this rule applies to (CIDR notation supported) */
-  clientIps?: string[];
+  clientIps?: string[] | undefined;
   /** Client IPs to exclude from this rule */
-  excludeClientIps?: string[];
+  excludeClientIps?: string[] | undefined;
   /** Request header transformations */
-  requestHeaders?: HeaderTransform;
+  requestHeaders?: HeaderTransform | undefined;
   /** Response header transformations */
-  responseHeaders?: HeaderTransform;
+  responseHeaders?: HeaderTransform | undefined;
   /** Per-rule logging configuration */
-  logging?: RuleLoggingConfig;
+  logging?: RuleLoggingConfig | undefined;
   /** gRPC-specific configuration */
-  grpc?: GrpcRuleConfig;
+  grpc?: GrpcRuleConfig | undefined;
 }
 
 export type AllowlistMode = 'strict' | 'permissive';
@@ -124,7 +124,7 @@ export interface MatchResult {
   /** Whether the request is allowed */
   allowed: boolean;
   /** The rule that matched (if any) */
-  matchedRule?: AllowlistRule;
+  matchedRule?: AllowlistRule | undefined;
   /** Reason for the decision */
   reason: string;
 }
@@ -135,19 +135,19 @@ export interface RequestInfo {
   /** Target port */
   port: number;
   /** Request path (for MITM mode) */
-  path?: string;
+  path?: string | undefined;
   /** HTTP method (for MITM mode) */
-  method?: string;
+  method?: string | undefined;
   /** Request headers (for MITM mode) */
-  headers?: Record<string, string>;
+  headers?: Record<string, string> | undefined;
   /** Source IP address */
-  sourceIp?: string;
+  sourceIp?: string | undefined;
   /** gRPC service name (for gRPC requests) */
-  grpcService?: string;
+  grpcService?: string | undefined;
   /** gRPC method name (for gRPC requests) */
-  grpcMethod?: string;
+  grpcMethod?: string | undefined;
   /** Whether this is a gRPC request */
-  isGrpc?: boolean;
+  isGrpc?: boolean | undefined;
   /** Whether this is a gRPC streaming request */
-  isGrpcStreaming?: boolean;
+  isGrpcStreaming?: boolean | undefined;
 }

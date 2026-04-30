@@ -12,7 +12,7 @@ import type { Logger } from '../logging/logger.js';
 import type { AuditLogger } from '../logging/audit-logger.js';
 import type { AllowlistMatcher } from '../filter/allowlist-matcher.js';
 import type { RateLimiter } from '../filter/rate-limiter.js';
-import type { RequestInfo } from '../types/allowlist.js';
+import type { MatchResult, RequestInfo } from '../types/allowlist.js';
 import { GrpcMatcher, createGrpcMatcher } from '../filter/grpc-matcher.js';
 import {
   parseGrpcPath,
@@ -247,7 +247,10 @@ export class GrpcHandler {
       await this.proxyToUpstream(stream, headers, host, port, grpcPath, requestInfo, matchResult);
     } catch (error) {
       this.config.logger.error({ error, host, service: grpcPath.fullService }, 'gRPC proxy error');
-      this.config.auditLogger.logError(requestInfo, error as Error);
+      this.config.auditLogger.logError(
+        requestInfo,
+        error instanceof Error ? error : String(error),
+      );
 
       if (!stream.destroyed) {
         this.sendGrpcError(stream, GrpcStatus.UNAVAILABLE, 'Upstream connection failed');
@@ -267,7 +270,7 @@ export class GrpcHandler {
     port: number,
     grpcPath: GrpcPath,
     requestInfo: RequestInfo,
-    matchResult: any,
+    matchResult: MatchResult,
   ): Promise<void> {
     return new Promise((resolve, reject) => {
       // Get or create upstream connection

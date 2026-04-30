@@ -7,7 +7,16 @@
 
 import http from 'node:http';
 import https from 'node:https';
+import type { Socket } from 'node:net';
 import type { Logger } from '../logging/logger.js';
+
+// Node's http.Agent exposes per-host socket maps as internal fields not in the
+// public types. We reach in for diagnostics only.
+interface AgentInternals {
+  sockets?: Record<string, Socket[]>;
+  freeSockets?: Record<string, Socket[]>;
+  requests?: Record<string, unknown[]>;
+}
 
 /**
  * Connection pool configuration.
@@ -99,7 +108,7 @@ export class ConnectionPool {
   private readonly config: ConnectionPoolConfig;
   private readonly httpAgent: http.Agent;
   private readonly httpsAgent: https.Agent;
-  private readonly logger?: Logger;
+  private readonly logger: Logger | undefined;
 
   // Statistics
   private totalRequests = 0;
@@ -277,7 +286,7 @@ export class ConnectionPool {
    */
   private getAgentSockets(agent: http.Agent): Record<string, number> {
     const sockets: Record<string, number> = {};
-    const agentSockets = (agent as any).sockets as Record<string, any[]> | undefined;
+    const agentSockets = (agent as unknown as AgentInternals).sockets;
 
     if (agentSockets) {
       for (const [key, socketArray] of Object.entries(agentSockets)) {
@@ -293,7 +302,7 @@ export class ConnectionPool {
    */
   private getAgentFreeSockets(agent: http.Agent): Record<string, number> {
     const freeSockets: Record<string, number> = {};
-    const agentFreeSockets = (agent as any).freeSockets as Record<string, any[]> | undefined;
+    const agentFreeSockets = (agent as unknown as AgentInternals).freeSockets;
 
     if (agentFreeSockets) {
       for (const [key, socketArray] of Object.entries(agentFreeSockets)) {
@@ -308,7 +317,7 @@ export class ConnectionPool {
    * Get the number of pending requests for a specific agent.
    */
   private getAgentPendingRequests(agent: http.Agent): number {
-    const requests = (agent as any).requests as Record<string, any[]> | undefined;
+    const requests = (agent as unknown as AgentInternals).requests;
     let count = 0;
     if (requests) {
       for (const reqs of Object.values(requests)) {

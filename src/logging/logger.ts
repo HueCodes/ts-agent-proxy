@@ -8,9 +8,9 @@ import type { LoggingConfig } from '../types/config.js';
 export type Logger = PinoLogger;
 
 export interface LoggerOptions {
-  name?: string;
-  level?: string;
-  pretty?: boolean;
+  name?: string | undefined;
+  level?: string | undefined;
+  pretty?: boolean | undefined;
 }
 
 /**

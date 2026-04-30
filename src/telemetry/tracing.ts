@@ -19,10 +19,12 @@ import {
   SpanStatusCode,
   SpanKind,
   propagation,
+  type Attributes,
   type Span,
   type Tracer,
   type Context,
 } from '@opentelemetry/api';
+import type { SpanExporter } from '@opentelemetry/sdk-trace-base';
 import type { IncomingMessage } from 'node:http';
 
 /**
@@ -179,7 +181,7 @@ export class TracingManager {
   /**
    * Create the trace exporter based on configuration.
    */
-  private createExporter(): any {
+  private createExporter(): SpanExporter | null {
     switch (this.config.exporter) {
       case 'otlp':
         return new OTLPTraceExporter({
@@ -191,9 +193,8 @@ export class TracingManager {
           port: this.config.jaegerPort ?? 6832,
         });
       case 'console':
-        // Console exporter for debugging
         return {
-          export: (spans: any[], resultCallback: (result: any) => void) => {
+          export: (spans, resultCallback) => {
             spans.forEach((span) => {
               console.log('Span:', JSON.stringify(span, null, 2));
             });
@@ -240,35 +241,31 @@ export class TracingManager {
     }
 
     const ctx = parentContext ?? context.active();
-    const span = this.tracer.startSpan(
-      name,
-      {
-        kind: SpanKind.SERVER,
-        attributes: attributes as Record<string, any>,
-      },
-      ctx,
-    );
-
-    return span;
+    const spanOptions: { kind: SpanKind; attributes?: Attributes } = {
+      kind: SpanKind.SERVER,
+    };
+    if (attributes !== undefined) {
+      spanOptions.attributes = attributes as Attributes;
+    }
+    return this.tracer.startSpan(name, spanOptions, ctx);
   }
 
   /**
    * Start a child span.
    */
-  startChildSpan(name: string, parent: Span, attributes?: Record<string, any>): Span {
+  startChildSpan(name: string, parent: Span, attributes?: Attributes): Span {
     if (!this.tracer) {
       return trace.getTracer('noop').startSpan('noop');
     }
 
     const ctx = trace.setSpan(context.active(), parent);
-    return this.tracer.startSpan(
-      name,
-      {
-        kind: SpanKind.INTERNAL,
-        attributes,
-      },
-      ctx,
-    );
+    const spanOptions: { kind: SpanKind; attributes?: Attributes } = {
+      kind: SpanKind.INTERNAL,
+    };
+    if (attributes !== undefined) {
+      spanOptions.attributes = attributes;
+    }
+    return this.tracer.startSpan(name, spanOptions, ctx);
   }
 
   /**
@@ -317,10 +314,11 @@ export class TracingManager {
       span.setStatus({ code: SpanStatusCode.OK });
       return result;
     } catch (error) {
-      span.recordException(error as Error);
+      const err = error instanceof Error ? error : new Error(String(error));
+      span.recordException(err);
       span.setStatus({
         code: SpanStatusCode.ERROR,
-        message: (error as Error).message,
+        message: err.message,
       });
       throw error;
     } finally {
@@ -345,7 +343,7 @@ export class TracingManager {
   /**
    * Add an event to the current span.
    */
-  addEvent(name: string, attributes?: Record<string, any>): void {
+  addEvent(name: string, attributes?: Attributes): void {
     const span = trace.getSpan(context.active());
     if (span) {
       span.addEvent(name, attributes);
@@ -355,7 +353,7 @@ export class TracingManager {
   /**
    * Set attributes on the current span.
    */
-  setAttributes(attributes: Record<string, any>): void {
+  setAttributes(attributes: Attributes): void {
     const span = trace.getSpan(context.active());
     if (span) {
       span.setAttributes(attributes);

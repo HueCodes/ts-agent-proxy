@@ -13,19 +13,19 @@ import type { HeaderTransform } from '../types/allowlist.js';
  */
 export interface TransformContext {
   /** Client IP address */
-  clientIp?: string;
+  clientIp?: string | undefined;
   /** Matched rule ID */
-  ruleId?: string;
+  ruleId?: string | undefined;
   /** Request timestamp (ISO string) */
-  timestamp?: string;
+  timestamp?: string | undefined;
   /** Request ID for tracing */
-  requestId?: string;
+  requestId?: string | undefined;
   /** Target host */
-  host?: string;
+  host?: string | undefined;
   /** Request path */
-  path?: string;
+  path?: string | undefined;
   /** HTTP method */
-  method?: string;
+  method?: string | undefined;
 }
 
 /**

@@ -87,7 +87,10 @@ export class ConnectHandler {
     try {
       await this.createTunnel(clientSocket, head, host, port, requestInfo, startTime);
     } catch (error) {
-      this.options.auditLogger.logError(requestInfo, error as Error);
+      this.options.auditLogger.logError(
+        requestInfo,
+        error instanceof Error ? error : String(error),
+      );
 
       if (error instanceof TimeoutError) {
         sendSocketError(

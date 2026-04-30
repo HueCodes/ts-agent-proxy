@@ -60,8 +60,8 @@ export interface ConfigWatcherOptions {
  */
 export class ConfigWatcher {
   private readonly options: Required<Omit<ConfigWatcherOptions, 'logger'>> & { logger?: Logger };
-  private watcher?: fs.FSWatcher;
-  private debounceTimer?: NodeJS.Timeout;
+  private watcher: fs.FSWatcher | undefined;
+  private debounceTimer: NodeJS.Timeout | undefined;
   private lastMtime?: number;
 
   /**

@@ -181,7 +181,10 @@ export class ForwardProxy {
     try {
       await this.forwardRequest(req, res, url, requestInfo, startTime);
     } catch (error) {
-      this.options.auditLogger.logError(requestInfo, error as Error);
+      this.options.auditLogger.logError(
+        requestInfo,
+        error instanceof Error ? error : String(error),
+      );
 
       if (error instanceof TimeoutError) {
         this.options.logger.warn(
@@ -302,10 +305,8 @@ export class ForwardProxy {
       };
 
       const proxyReq = transport.request(options, (proxyRes) => {
-        // Track connection reuse
-        const socket = proxyReq.socket;
-        const reused = socket ? (socket as any).reused === true : false;
-        this.connectionPool.recordRequest(reused);
+        // `reusedSocket` is set by Node when the request goes out on a kept-alive socket.
+        this.connectionPool.recordRequest(proxyReq.reusedSocket);
         // Clear connect timeout, set response timeout
         if (connectTimeoutId) {
           clearTimeout(connectTimeoutId);

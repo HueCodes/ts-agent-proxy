@@ -17,7 +17,7 @@ import type { Logger } from '../logging/logger.js';
 import type { AuditLogger } from '../logging/audit-logger.js';
 import type { AllowlistMatcher } from '../filter/allowlist-matcher.js';
 import type { RateLimiter } from '../filter/rate-limiter.js';
-import type { RequestInfo } from '../types/allowlist.js';
+import type { MatchResult, RequestInfo } from '../types/allowlist.js';
 
 /**
  * WebSocket handler configuration.
@@ -151,7 +151,10 @@ export class WebSocketHandler {
       await this.proxyWebSocket(req, socket, head, targetUrl, requestInfo, matchResult);
     } catch (error) {
       this.config.logger.error({ error, host: requestInfo.host }, 'WebSocket proxy error');
-      this.config.auditLogger.logError(requestInfo, error as Error);
+      this.config.auditLogger.logError(
+        requestInfo,
+        error instanceof Error ? error : String(error),
+      );
       this.rejectUpgrade(socket, 502, 'Bad Gateway: Could not connect to upstream');
     }
   }
@@ -165,7 +168,7 @@ export class WebSocketHandler {
     head: Buffer,
     targetUrl: URL,
     requestInfo: RequestInfo,
-    matchResult: any,
+    matchResult: MatchResult,
   ): Promise<void> {
     return new Promise((resolve, reject) => {
       const isSecure = targetUrl.protocol === 'wss:' || targetUrl.protocol === 'https:';
@@ -318,7 +321,7 @@ export class WebSocketHandler {
     clientSocket: Socket | Duplex,
     upstreamSocket: net.Socket,
     requestInfo: RequestInfo,
-    matchResult: any,
+    matchResult: MatchResult,
   ): void {
     // Set idle timeout
     upstreamSocket.setTimeout(this.config.idleTimeout);
@@ -371,8 +374,9 @@ export class WebSocketHandler {
         return new URL(url);
       }
 
-      // Construct URL from host header
-      const protocol = (req.socket as any).encrypted ? 'wss:' : 'ws:';
+      // TLSSocket exposes `encrypted: true`; plain net.Socket does not.
+      const encrypted = (req.socket as { encrypted?: boolean }).encrypted === true;
+      const protocol = encrypted ? 'wss:' : 'ws:';
       return new URL(`${protocol}//${host}${url}`);
     } catch {
       return null;

@@ -210,7 +210,7 @@ export class MitmInterceptor {
         this.prepareForNextRequest(clientSocket, parser);
       } catch (error) {
         this.options.logger.error(
-          { error: (error as Error).message },
+          { error: error instanceof Error ? error.message : String(error) },
           'Error processing MITM request',
         );
         if (error instanceof TimeoutError) {

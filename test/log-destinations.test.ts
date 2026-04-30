@@ -196,25 +196,27 @@ describe('FileDestination', () => {
       expect(files.length).toBeLessThanOrEqual(3);
     });
 
-    it('should handle rotation when stream is undefined', () => {
+    it('should handle rotation when stream is undefined', async () => {
       const dest = new FileDestination({
         path: testFile,
         rotate: true,
         maxSize: 10,
       });
+      // Close the real stream before nulling it so it doesn't leak into afterEach.
+      await dest.close();
       (dest as any).stream = undefined;
       // Calling rotate directly should not throw
       expect(() => (dest as any).rotate()).not.toThrow();
     });
 
-    it('should use default config values', () => {
+    it('should use default config values', async () => {
       const dest = new FileDestination({ path: testFile });
       const config = (dest as any).config;
       expect(config.rotate).toBe(false);
       expect(config.maxSize).toBe(10 * 1024 * 1024);
       expect(config.maxFiles).toBe(5);
       expect(config.compress).toBe(false);
-      dest.close();
+      await dest.close();
     });
   });
 });

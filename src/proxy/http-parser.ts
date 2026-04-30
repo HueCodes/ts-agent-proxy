@@ -132,14 +132,15 @@ export class HttpRequestParser extends EventEmitter {
    * Get partial request data (for progress tracking).
    */
   getPartialRequest(): Partial<ParsedHttpRequest> {
-    return {
-      method: this.method || undefined,
-      path: this.path || undefined,
-      httpVersion: this.httpVersion || undefined,
-      headers: Object.keys(this.headers).length > 0 ? this.headers : undefined,
-      body: this.body.length > 0 ? this.body : undefined,
+    const result: Partial<ParsedHttpRequest> = {
       complete: this.state === 'complete',
     };
+    if (this.method) result.method = this.method;
+    if (this.path) result.path = this.path;
+    if (this.httpVersion) result.httpVersion = this.httpVersion;
+    if (Object.keys(this.headers).length > 0) result.headers = this.headers;
+    if (this.body.length > 0) result.body = this.body;
+    return result;
   }
 
   /**
