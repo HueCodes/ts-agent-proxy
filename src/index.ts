@@ -13,6 +13,7 @@ import { createLogger } from './logging/logger.js';
 import { parseAllowlistConfigJson } from './validation/validator.js';
 import { ConfigurationError } from './errors.js';
 import { applySafeDefaults, formatSafeDefaultsBanner } from './profiles/safe-defaults.js';
+import { getProfile, listProfiles, mergeProfile } from './profiles/index.js';
 
 // Re-export types
 export * from './types/allowlist.js';
@@ -177,6 +178,15 @@ async function main(): Promise<void> {
     .filter((a) => a.startsWith('--allow-domain='))
     .map((a) => a.split('=')[1]!)
     .filter((v) => v.length > 0);
+  const profileArg = args.find((a) => a.startsWith('--profile='))?.split('=')[1];
+  const listProfilesArg = args.includes('--list-profiles');
+
+  if (listProfilesArg) {
+    for (const p of listProfiles()) {
+      process.stdout.write(`${p.name.padEnd(16)}  ${p.description}\n`);
+    }
+    return;
+  }
 
   // Startup diagnostics
   logger.info(
@@ -236,6 +246,26 @@ async function main(): Promise<void> {
       logger.error({ mode }, 'Invalid proxy mode (must be "tunnel" or "mitm")');
       process.exit(1);
     }
+  }
+
+  // --profile loads a curated allowlist for a specific agent.
+  if (profileArg) {
+    const profile = getProfile(profileArg);
+    if (!profile) {
+      const known = listProfiles()
+        .map((p) => p.name)
+        .join(', ');
+      logger.error(
+        { profile: profileArg, known },
+        `Unknown profile "${profileArg}". Known profiles: ${known}`,
+      );
+      process.exit(1);
+    }
+    config.allowlist = mergeProfile(config.allowlist, profile);
+    logger.info(
+      { profile: profile.name, addedRules: profile.allowlist.length },
+      `Applied profile: ${profile.name}`,
+    );
   }
 
   // Inline --allow-domain rules append to the loaded allowlist. They mirror
