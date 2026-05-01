@@ -154,11 +154,32 @@ function getVersion(): string {
  * CLI entry point.
  */
 async function main(): Promise<void> {
+  const argv = process.argv.slice(2);
+
+  // Subcommand dispatch. The default mode (no subcommand) is "serve" — boot
+  // the proxy and listen for connections.
+  if (argv[0] === 'run') {
+    const { runUnderProxy } = await import('./cli/run.js');
+    const sepIdx = argv.indexOf('--');
+    const opts = argv.slice(1, sepIdx === -1 ? argv.length : sepIdx);
+    const command = sepIdx === -1 ? [] : argv.slice(sepIdx + 1);
+    const result = await runUnderProxy({
+      profile: opts.find((a) => a.startsWith('--profile='))?.split('=')[1] ?? 'generic-agent',
+      command,
+      port: parseIntFlag(opts, '--port'),
+      unsafeDisableDefaults: opts.includes('--unsafe-disable-defaults'),
+      allowDomains: collectFlag(opts, '--allow-domain'),
+      blockDomains: collectFlag(opts, '--block-domain'),
+      blockIpRanges: collectFlag(opts, '--block-ip-range'),
+    });
+    process.exit(result.exitCode);
+  }
+
   const logger = createLogger({ level: 'info', pretty: true });
   const version = getVersion();
 
   // Parse command line arguments
-  const args = process.argv.slice(2);
+  const args = argv;
   const configArg = args.find((a) => a.startsWith('--config='));
   const portArg = args.find((a) => a.startsWith('--port='));
   const hostArg = args.find((a) => a.startsWith('--host='));
@@ -386,6 +407,20 @@ async function main(): Promise<void> {
     logger.error({ error }, 'Failed to start server');
     process.exit(1);
   }
+}
+
+function collectFlag(args: string[], flag: string): string[] {
+  return args
+    .filter((a) => a.startsWith(`${flag}=`))
+    .map((a) => a.slice(flag.length + 1))
+    .filter((v) => v.length > 0);
+}
+
+function parseIntFlag(args: string[], flag: string): number | undefined {
+  const v = args.find((a) => a.startsWith(`${flag}=`))?.slice(flag.length + 1);
+  if (v === undefined) return undefined;
+  const n = parseInt(v, 10);
+  return Number.isNaN(n) ? undefined : n;
 }
 
 // Run if this is the entry point
