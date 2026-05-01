@@ -3,4 +3,5 @@ dist/
 coverage/
 NOTES.txt
 *.log
+!demos/sample-audit.log
 .DS_Store
