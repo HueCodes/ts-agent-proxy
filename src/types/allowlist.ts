@@ -111,6 +111,27 @@ export interface AllowlistRule {
 export type AllowlistMode = 'strict' | 'permissive';
 export type DefaultAction = 'allow' | 'deny';
 
+/**
+ * User-explicit blocklist. Always wins, even over allow rules.
+ */
+export interface BlockConfig {
+  /** Hostnames to block (exact or *.domain.com / **.domain.com wildcards) */
+  domains?: string[] | undefined;
+  /** Destination IP ranges to block (CIDR) */
+  ipRanges?: string[] | undefined;
+}
+
+/**
+ * Safe-defaults policy attached to a config by applySafeDefaults().
+ * Internal field — not loaded from user JSON/YAML directly.
+ */
+export interface SafeDefaultsConfig {
+  enabled: boolean;
+  ipRanges: readonly string[];
+  domains: readonly string[];
+  httpsOnly: boolean;
+}
+
 export interface AllowlistConfig {
   /** Operating mode: strict (deny by default) or permissive (allow by default) */
   mode: AllowlistMode;
@@ -118,6 +139,10 @@ export interface AllowlistConfig {
   defaultAction: DefaultAction;
   /** List of allowlist rules */
   rules: AllowlistRule[];
+  /** User-explicit blocks (always apply, override allow rules) */
+  block?: BlockConfig | undefined;
+  /** Safe-default blocks (overridden by user allow rules; on by default) */
+  safeDefaults?: SafeDefaultsConfig | undefined;
 }
 
 export interface MatchResult {

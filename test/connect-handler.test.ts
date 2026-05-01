@@ -49,6 +49,7 @@ function createMocks() {
       reason: 'Domain allowed',
       matchedRule: { id: 'rule-1', domain: 'example.com' },
     }),
+    checkDnsRebinding: vi.fn().mockResolvedValue(null),
     reload: vi.fn(),
     getConfig: vi.fn(),
   } as unknown as AllowlistMatcher;
@@ -236,7 +237,7 @@ describe('ConnectHandler', () => {
         expect.stringContaining('403 Forbidden'),
       );
       expect((clientSocket as any).write).toHaveBeenCalledWith(
-        expect.stringContaining('Domain not allowed: evil.example.com'),
+        expect.stringContaining('No matching rule'),
       );
       expect((clientSocket as any).end).toHaveBeenCalled();
     });

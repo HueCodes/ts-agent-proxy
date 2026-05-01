@@ -33,6 +33,7 @@ function createMockAllowlistMatcher(defaultResult?: Partial<MatchResult>) {
   return {
     match: vi.fn().mockReturnValue(result),
     isDomainAllowed: vi.fn().mockReturnValue(result),
+    checkDnsRebinding: vi.fn().mockResolvedValue(null),
     reload: vi.fn(),
   } as any;
 }
@@ -420,7 +421,7 @@ describe('ForwardProxy', () => {
       );
       const body403 = JSON.parse(res._body);
       expect(body403.error).toBe('DOMAIN_NOT_ALLOWED');
-      expect(body403.message).toContain('not permitted');
+      expect(body403.message).toBe('Domain not in allowlist');
       expect(body403.requestId).toBeDefined();
     });
 

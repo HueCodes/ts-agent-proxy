@@ -61,12 +61,22 @@ export class ConnectHandler {
 
     this.options.logger.debug({ host, port, sourceIp }, 'CONNECT request received');
 
-    // Check allowlist
+    // Check allowlist (sync: literal IPs, domain rules, user blocks, safe defaults)
     const matchResult = this.options.allowlistMatcher.isDomainAllowed(host);
 
     if (!matchResult.allowed) {
       this.options.auditLogger.logRequest(requestInfo, matchResult, Date.now() - startTime);
-      this.sendForbidden(clientSocket, `Domain not allowed: ${host}`);
+      this.sendForbidden(clientSocket, matchResult.reason);
+      return;
+    }
+
+    // DNS rebinding defense: even an allowed hostname must not resolve to a
+    // safe-default-blocked IP (e.g. evil.com -> 169.254.169.254).
+    const rebindingReason = await this.options.allowlistMatcher.checkDnsRebinding(host);
+    if (rebindingReason !== null) {
+      const rebindingResult = { allowed: false, reason: rebindingReason };
+      this.options.auditLogger.logRequest(requestInfo, rebindingResult, Date.now() - startTime);
+      this.sendForbidden(clientSocket, rebindingReason);
       return;
     }
 

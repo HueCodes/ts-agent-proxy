@@ -146,18 +146,22 @@ export class ForwardProxy {
       'HTTP request received',
     );
 
-    // Check allowlist
+    // Check allowlist (sync)
     const matchResult = this.options.allowlistMatcher.match(requestInfo);
 
     if (!matchResult.allowed) {
       this.options.auditLogger.logRequest(requestInfo, matchResult, Date.now() - startTime);
-      sendJsonError(
-        res,
-        403,
-        'DOMAIN_NOT_ALLOWED',
-        `Request to ${requestInfo.host} is not permitted by the allowlist`,
-        requestId,
-      );
+      sendJsonError(res, 403, 'DOMAIN_NOT_ALLOWED', matchResult.reason, requestId);
+      return;
+    }
+
+    // DNS rebinding defense: even an allowed hostname must not resolve to a
+    // safe-default-blocked IP.
+    const rebindingReason = await this.options.allowlistMatcher.checkDnsRebinding(requestInfo.host);
+    if (rebindingReason !== null) {
+      const rebindingResult = { allowed: false, reason: rebindingReason };
+      this.options.auditLogger.logRequest(requestInfo, rebindingResult, Date.now() - startTime);
+      sendJsonError(res, 403, 'DNS_REBINDING_BLOCKED', rebindingReason, requestId);
       return;
     }
 

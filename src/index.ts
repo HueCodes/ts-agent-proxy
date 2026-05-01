@@ -12,6 +12,7 @@ import type { AllowlistConfig } from './types/allowlist.js';
 import { createLogger } from './logging/logger.js';
 import { parseAllowlistConfigJson } from './validation/validator.js';
 import { ConfigurationError } from './errors.js';
+import { applySafeDefaults, formatSafeDefaultsBanner } from './profiles/safe-defaults.js';
 
 // Re-export types
 export * from './types/allowlist.js';
@@ -163,6 +164,19 @@ async function main(): Promise<void> {
   const modeArg = args.find((a) => a.startsWith('--mode='));
   const watchArg = args.includes('--watch');
   const adminArg = args.find((a) => a.startsWith('--admin-port='));
+  const unsafeDisableDefaults = args.includes('--unsafe-disable-defaults');
+  const blockDomainArgs = args
+    .filter((a) => a.startsWith('--block-domain='))
+    .map((a) => a.split('=')[1]!)
+    .filter((v) => v.length > 0);
+  const blockIpArgs = args
+    .filter((a) => a.startsWith('--block-ip-range='))
+    .map((a) => a.split('=')[1]!)
+    .filter((v) => v.length > 0);
+  const allowDomainArgs = args
+    .filter((a) => a.startsWith('--allow-domain='))
+    .map((a) => a.split('=')[1]!)
+    .filter((v) => v.length > 0);
 
   // Startup diagnostics
   logger.info(
@@ -222,6 +236,28 @@ async function main(): Promise<void> {
       logger.error({ mode }, 'Invalid proxy mode (must be "tunnel" or "mitm")');
       process.exit(1);
     }
+  }
+
+  // Inline --allow-domain rules append to the loaded allowlist. They mirror
+  // the additive escape hatch documented in the README.
+  for (const domain of allowDomainArgs) {
+    const id = `cli-allow-${config.allowlist.rules.length}`;
+    config.allowlist.rules.push({ id, domain });
+  }
+
+  // Apply safe-defaults (RFC1918, IMDS, link-local, plain HTTP). These layer
+  // on top of whatever was loaded from disk and any --allow-domain entries.
+  config.allowlist = applySafeDefaults(config.allowlist, {
+    disabled: unsafeDisableDefaults,
+    extraBlockDomains: blockDomainArgs,
+    extraBlockIpRanges: blockIpArgs,
+  });
+
+  const safeDefaultsPolicy = config.allowlist.safeDefaults;
+  if (safeDefaultsPolicy && !safeDefaultsPolicy.enabled) {
+    logger.warn(formatSafeDefaultsBanner(safeDefaultsPolicy));
+  } else if (safeDefaultsPolicy) {
+    logger.info(formatSafeDefaultsBanner(safeDefaultsPolicy));
   }
 
   // Enable admin server if port specified

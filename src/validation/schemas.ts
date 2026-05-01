@@ -112,6 +112,25 @@ export const DefaultActionSchema = z.enum(['allow', 'deny']);
 /**
  * Schema for the complete allowlist configuration.
  */
+/**
+ * Schema for the user-explicit blocklist. Always wins over allow rules.
+ */
+export const BlockConfigSchema = z.object({
+  domains: z.array(z.string().min(1)).optional(),
+  ipRanges: z.array(z.string().min(1)).optional(),
+});
+
+/**
+ * Schema for the safe-defaults policy. Internal — populated by
+ * applySafeDefaults(), not authored by users.
+ */
+export const SafeDefaultsConfigSchema = z.object({
+  enabled: z.boolean(),
+  ipRanges: z.array(z.string()).readonly(),
+  domains: z.array(z.string()).readonly(),
+  httpsOnly: z.boolean(),
+});
+
 export const AllowlistConfigSchema = z
   .object({
     /** Operating mode: strict (deny by default) or permissive (allow by default) */
@@ -122,6 +141,12 @@ export const AllowlistConfigSchema = z
 
     /** List of allowlist rules */
     rules: z.array(AllowlistRuleSchema),
+
+    /** User-explicit blocks (always apply, override allow rules) */
+    block: BlockConfigSchema.optional(),
+
+    /** Safe-default blocks (overridden by user allow rules; internal) */
+    safeDefaults: SafeDefaultsConfigSchema.optional(),
   })
   .refine(
     (config) => {

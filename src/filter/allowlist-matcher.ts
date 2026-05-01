@@ -8,6 +8,7 @@
  */
 
 import picomatch from 'picomatch';
+import { promises as dns } from 'node:dns';
 import type {
   AllowlistConfig,
   AllowlistRule,
@@ -17,6 +18,14 @@ import type {
 import { DomainMatcher } from './domain-matcher.js';
 import { IpMatcher } from './ip-matcher.js';
 import { DomainTrie, createDomainTrie } from './domain-trie.js';
+
+const DNS_CACHE_TTL_MS = 30_000;
+
+function isLiteralIp(host: string): boolean {
+  // Crude but sufficient: IPv4 dotted quad or anything containing a colon (IPv6).
+  if (host.includes(':')) return true;
+  return /^(\d{1,3}\.){3}\d{1,3}$/.test(host);
+}
 
 /**
  * Allowlist matcher that determines whether requests are permitted.
@@ -54,6 +63,14 @@ export class AllowlistMatcher {
   private domainTrie: DomainTrie;
   /** Cache of rule IDs indexed by domain for quick access */
   private readonly rulesByDomain: Map<string, AllowlistRule[]>;
+  /** Compiled matchers for the user-explicit block list */
+  private blockDomainMatchers: DomainMatcher[];
+  private blockIpMatcher: IpMatcher | null;
+  /** Compiled matchers for the safe-defaults block list */
+  private safeDefaultDomainMatchers: DomainMatcher[];
+  private safeDefaultIpMatcher: IpMatcher | null;
+  /** Brief DNS cache to spare upstream resolvers from per-request load */
+  private readonly dnsCache: Map<string, { ips: string[]; expiresAt: number }>;
 
   /**
    * Creates a new AllowlistMatcher.
@@ -68,6 +85,11 @@ export class AllowlistMatcher {
     this.excludeIpMatchers = new Map();
     this.rulesByDomain = new Map();
     this.domainTrie = new DomainTrie();
+    this.blockDomainMatchers = [];
+    this.blockIpMatcher = null;
+    this.safeDefaultDomainMatchers = [];
+    this.safeDefaultIpMatcher = null;
+    this.dnsCache = new Map();
     this.initializeMatchers();
   }
 
@@ -104,6 +126,21 @@ export class AllowlistMatcher {
         this.excludeIpMatchers.set(rule.id, new IpMatcher(rule.excludeClientIps));
       }
     }
+
+    // User-explicit blocks
+    const block = this.config.block;
+    this.blockDomainMatchers = (block?.domains ?? []).map((d) => new DomainMatcher(d));
+    this.blockIpMatcher =
+      block?.ipRanges && block.ipRanges.length > 0 ? new IpMatcher(block.ipRanges) : null;
+
+    // Safe-default blocks
+    const safe = this.config.safeDefaults;
+    this.safeDefaultDomainMatchers =
+      safe?.enabled && safe.domains.length > 0 ? safe.domains.map((d) => new DomainMatcher(d)) : [];
+    this.safeDefaultIpMatcher =
+      safe?.enabled && safe.ipRanges.length > 0 ? new IpMatcher([...safe.ipRanges]) : null;
+
+    this.dnsCache.clear();
   }
 
   /**
@@ -132,10 +169,15 @@ export class AllowlistMatcher {
    * ```
    */
   match(request: RequestInfo): MatchResult {
-    // Use domain trie for fast candidate lookup
+    // 1. User-explicit blocks always win.
+    const userBlock = this.matchesUserBlock(request);
+    if (userBlock) {
+      return { allowed: false, reason: userBlock };
+    }
+
+    // 2. Allow rules. Use domain trie for fast candidate lookup.
     const candidateRules = this.domainTrie.findMatchingRules(request.host);
 
-    // If we have candidates from the trie, check them first
     if (candidateRules.length > 0) {
       for (const rule of candidateRules) {
         if (rule.enabled === false) continue;
@@ -149,13 +191,9 @@ export class AllowlistMatcher {
       }
     }
 
-    // Fallback: Check all enabled rules (for complex patterns not in trie)
     const enabledRules = this.config.rules.filter((r) => r.enabled !== false);
-
     for (const rule of enabledRules) {
-      // Skip rules we already checked via trie
       if (candidateRules.includes(rule)) continue;
-
       if (this.matchesRule(request, rule)) {
         return {
           allowed: true,
@@ -165,7 +203,13 @@ export class AllowlistMatcher {
       }
     }
 
-    // No rule matched - apply default action
+    // 3. Safe-default blocks (user allow rules already had their chance above).
+    const safeBlock = this.matchesSafeDefault(request);
+    if (safeBlock) {
+      return { allowed: false, reason: safeBlock };
+    }
+
+    // 4. Default action.
     const allowed = this.config.defaultAction === 'allow';
     return {
       allowed,
@@ -173,6 +217,88 @@ export class AllowlistMatcher {
         ? 'No rule matched, default action is allow'
         : 'No rule matched, default action is deny',
     };
+  }
+
+  /**
+   * Return a denial reason if the request hits the user-explicit blocklist,
+   * else null.
+   */
+  private matchesUserBlock(request: RequestInfo): string | null {
+    for (const m of this.blockDomainMatchers) {
+      if (m.matches(request.host)) {
+        return `Blocked by user policy: domain ${request.host}`;
+      }
+    }
+    if (
+      this.blockIpMatcher &&
+      isLiteralIp(request.host) &&
+      this.blockIpMatcher.matches(request.host)
+    ) {
+      return `Blocked by user policy: IP ${request.host}`;
+    }
+    return null;
+  }
+
+  /**
+   * Return a denial reason if the request hits the safe-default blocklist
+   * (after allow rules have had their chance), else null.
+   */
+  private matchesSafeDefault(request: RequestInfo): string | null {
+    const safe = this.config.safeDefaults;
+    if (!safe?.enabled) return null;
+
+    for (const m of this.safeDefaultDomainMatchers) {
+      if (m.matches(request.host)) {
+        return `safe-default: blocked metadata/internal hostname ${request.host}`;
+      }
+    }
+    if (this.safeDefaultIpMatcher && isLiteralIp(request.host)) {
+      if (this.safeDefaultIpMatcher.matches(request.host)) {
+        return `safe-default: blocked private/loopback/link-local IP ${request.host}`;
+      }
+    }
+    if (safe.httpsOnly && request.port === 80) {
+      return `safe-default: plain HTTP egress to ${request.host}:80 requires explicit allow`;
+    }
+    return null;
+  }
+
+  /**
+   * Resolve a hostname and check the resolved IPs against the safe-default
+   * IP blocklist. Used to defend against DNS rebinding (a domain that allow-
+   * rules approve but resolves to an internal address).
+   *
+   * Returns a denial reason if rebinding is detected, else null. Resolution
+   * failures are surfaced as "lookup failed"; callers may treat that as
+   * deny-fail-closed if appropriate.
+   */
+  async checkDnsRebinding(host: string): Promise<string | null> {
+    const safe = this.config.safeDefaults;
+    if (!safe?.enabled) return null;
+    if (this.safeDefaultIpMatcher === null) return null;
+    if (isLiteralIp(host)) return null; // already handled by sync match
+
+    let ips: string[];
+    const cached = this.dnsCache.get(host);
+    const now = Date.now();
+    if (cached && cached.expiresAt > now) {
+      ips = cached.ips;
+    } else {
+      try {
+        const records = await dns.lookup(host, { all: true, verbatim: true });
+        ips = records.map((r) => r.address);
+      } catch {
+        return null; // resolution failed; let the upstream connect surface the error
+      }
+      this.dnsCache.set(host, { ips, expiresAt: now + DNS_CACHE_TTL_MS });
+    }
+
+    for (const ip of ips) {
+      if (this.safeDefaultIpMatcher.matches(ip)) {
+        return `safe-default: DNS rebinding — ${host} resolved to blocked IP ${ip}`;
+      }
+    }
+    return null;
   }
 
   /**
@@ -343,6 +469,11 @@ export class AllowlistMatcher {
     this.excludeIpMatchers.clear();
     this.rulesByDomain.clear();
     this.domainTrie.clear();
+    this.blockDomainMatchers = [];
+    this.blockIpMatcher = null;
+    this.safeDefaultDomainMatchers = [];
+    this.safeDefaultIpMatcher = null;
+    this.dnsCache.clear();
     this.initializeMatchers();
   }
 
