@@ -10,10 +10,9 @@ import { createProxyServer } from './server.js';
 import { createDefaultConfig, type ProxyConfig } from './types/config.js';
 import type { AllowlistConfig } from './types/allowlist.js';
 import { createLogger } from './logging/logger.js';
-import { parseAllowlistConfigJson } from './validation/validator.js';
-import { ConfigurationError } from './errors.js';
 import { applySafeDefaults, formatSafeDefaultsBanner } from './profiles/safe-defaults.js';
 import { getProfile, listProfiles, mergeProfile } from './profiles/index.js';
+import { loadAllowlistConfigFile } from './config/yaml-loader.js';
 
 // Re-export types
 export * from './types/allowlist.js';
@@ -107,17 +106,7 @@ export {
  * ```
  */
 export function loadAllowlistConfig(filePath: string): AllowlistConfig {
-  let content: string;
-  try {
-    content = fs.readFileSync(filePath, 'utf-8');
-  } catch (error) {
-    throw new ConfigurationError(
-      `Failed to read configuration file: ${error instanceof Error ? error.message : 'Unknown error'}`,
-      filePath,
-    );
-  }
-
-  return parseAllowlistConfigJson(content, filePath);
+  return loadAllowlistConfigFile(filePath);
 }
 
 /**
