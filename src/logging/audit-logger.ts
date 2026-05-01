@@ -14,6 +14,12 @@ import type { Logger } from './logger.js';
 import type { MatchResult, RequestInfo, AllowlistRule } from '../types/allowlist.js';
 import type { RateLimitResult } from '../filter/rate-limiter.js';
 import type { LogDestination } from './log-destinations.js';
+import {
+  detectSecrets,
+  redact,
+  type SecretPattern,
+  type SecretDetection,
+} from '../filter/secret-detector.js';
 
 /** Default headers to redact */
 const DEFAULT_REDACT_HEADERS = [
@@ -180,6 +186,10 @@ export interface AuditLoggerOptions {
   logStatusCodes?: number[] | undefined;
   /** Log response headers */
   logResponseHeaders?: boolean | undefined;
+  /** Scan request bodies + headers for secrets and replace before logging. */
+  scrubSecrets?: boolean | undefined;
+  /** Override the built-in secret patterns. */
+  secretPatterns?: readonly SecretPattern[] | undefined;
 }
 
 /**
@@ -221,6 +231,8 @@ export class AuditLogger {
     samplingRate: number;
     logStatusCodes: number[] | undefined;
     logResponseHeaders: boolean;
+    scrubSecrets: boolean;
+    secretPatterns: readonly SecretPattern[] | undefined;
   };
   private readonly redactHeadersLower: Set<string>;
   private readonly piiPatterns: RegExp[];
@@ -258,6 +270,8 @@ export class AuditLogger {
       samplingRate: options.samplingRate ?? 1.0,
       logStatusCodes: options.logStatusCodes,
       logResponseHeaders: options.logResponseHeaders ?? false,
+      scrubSecrets: options.scrubSecrets ?? true,
+      secretPatterns: options.secretPatterns,
     };
 
     // Pre-compute lowercase header names for fast lookup
@@ -421,7 +435,14 @@ export class AuditLogger {
     if (this.options.loggingLevel === 'full' && options?.body) {
       let bodyStr = this.truncateBody(options.body);
       bodyStr = this.scrubPii(bodyStr);
+      bodyStr = this.scrubSecretsInString(bodyStr, options?.headers);
       entry.body = bodyStr;
+    }
+
+    // Even outside `full` mode, scrub any header values that contain secret
+    // material so the audit entry is safe to share.
+    if (this.options.scrubSecrets && entry.headers) {
+      entry.headers = this.scrubSecretsInHeaders(entry.headers);
     }
 
     this.writeEntry(entry);
@@ -544,6 +565,36 @@ export class AuditLogger {
    */
   generateRequestId(): string {
     return randomUUID();
+  }
+
+  /**
+   * Scrub secrets from a string, optionally using upstream headers as
+   * additional context for keyword-gated detectors.
+   */
+  private scrubSecretsInString(
+    source: string,
+    headers?: Record<string, string | string[] | undefined>,
+  ): string {
+    if (!this.options.scrubSecrets) return source;
+    const detections: SecretDetection[] = detectSecrets(source, headers ?? {}, {
+      patterns: this.options.secretPatterns,
+    }).filter((d) => d.start < source.length);
+    return redact(source, detections);
+  }
+
+  /**
+   * Scrub secrets from already-redacted header values. The header redactor
+   * masks values for known sensitive header names; this catches secrets
+   * embedded in less-obvious headers (User-Agent, custom telemetry headers).
+   */
+  private scrubSecretsInHeaders(headers: Record<string, string>): Record<string, string> {
+    if (!this.options.scrubSecrets) return headers;
+    const out: Record<string, string> = {};
+    for (const [name, value] of Object.entries(headers)) {
+      const detections = detectSecrets(value, {}, { patterns: this.options.secretPatterns });
+      out[name] = redact(value, detections);
+    }
+    return out;
   }
 
   /**
