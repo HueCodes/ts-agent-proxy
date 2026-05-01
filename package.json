@@ -1,6 +1,6 @@
 {
   "name": "ts-agent-proxy",
-  "version": "0.1.0",
+  "version": "0.2.0-rc1",
   "description": "A network firewall for AI coding agents — block typo-squats, IMDS, secret exfiltration, and unsanctioned MCP servers.",
   "type": "module",
   "main": "dist/index.js",
