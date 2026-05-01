@@ -50,6 +50,7 @@ function createMocks() {
       matchedRule: { id: 'rule-1', domain: 'example.com' },
     }),
     checkDnsRebinding: vi.fn().mockResolvedValue(null),
+    resolveAndCheckHost: vi.fn().mockResolvedValue({ kind: 'pass' }),
     reload: vi.fn(),
     getConfig: vi.fn(),
   } as unknown as AllowlistMatcher;

@@ -78,6 +78,10 @@ export function inspectCa(
 
 /**
  * Generate a fresh CA pair and write it to the cache dir.
+ *
+ * Writes are atomic: each output is written to a `.tmp.<pid>` sibling and
+ * then `rename`d into place, so a concurrent reader (a second `run`
+ * invocation that just loaded the previous CA) never sees a torn file.
  */
 export function generateCa(paths: CaPaths = caPaths()): void {
   fs.mkdirSync(paths.dir, { recursive: true, mode: 0o700 });
@@ -103,17 +107,78 @@ export function generateCa(paths: CaPaths = caPaths()): void {
   ]);
   cert.sign(keys.privateKey, forge.md.sha256.create());
 
-  fs.writeFileSync(paths.certPath, forge.pki.certificateToPem(cert), { mode: 0o644 });
-  fs.writeFileSync(paths.keyPath, forge.pki.privateKeyToPem(keys.privateKey), { mode: 0o600 });
+  atomicWriteFile(paths.certPath, forge.pki.certificateToPem(cert), 0o644);
+  atomicWriteFile(paths.keyPath, forge.pki.privateKeyToPem(keys.privateKey), 0o600);
+}
+
+function atomicWriteFile(target: string, contents: string, mode: number): void {
+  const tmp = `${target}.tmp.${process.pid}`;
+  fs.writeFileSync(tmp, contents, { mode });
+  fs.renameSync(tmp, target);
 }
 
 /**
- * Load (and lazily provision) the cached CA. Returns the resolved paths.
+ * Lockfile-coordinated CA provisioning. Two concurrent `run` invocations
+ * arriving at an empty cache would otherwise both run `generateCa` and
+ * race on the file writes; the second writer would clobber the cert the
+ * first proxy had already loaded into memory.
+ *
+ * The lock is taken with `O_EXCL`. If we can't get it, we wait for the
+ * other writer to finish and re-inspect — by which point the CA is
+ * usually `usable`.
  */
 export function ensureCa(paths: CaPaths = caPaths()): CaPaths {
-  const status = inspectCa(paths);
-  if (status !== 'usable') {
-    generateCa(paths);
+  if (inspectCa(paths) === 'usable') return paths;
+
+  fs.mkdirSync(paths.dir, { recursive: true, mode: 0o700 });
+  const lockPath = `${paths.certPath}.lock`;
+
+  let lockFd: number | undefined;
+  for (let attempt = 0; attempt < 50; attempt++) {
+    try {
+      lockFd = fs.openSync(lockPath, 'wx');
+      break;
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code;
+      if (code !== 'EEXIST') throw err;
+      // Stale-lock heuristic: if it's older than 60s, steal it.
+      try {
+        const age = Date.now() - fs.statSync(lockPath).mtimeMs;
+        if (age > 60_000) fs.unlinkSync(lockPath);
+      } catch {
+        // Lock vanished between stat and unlink — fine.
+      }
+      // Brief wait before retrying.
+      const deadline = Date.now() + 100;
+      while (Date.now() < deadline) {
+        // Busy-wait is acceptable here: total wait capped at ~5s, and
+        // ensureCa runs once per process startup.
+      }
+      // Another writer may have finished in the meantime.
+      if (inspectCa(paths) === 'usable') return paths;
+    }
   }
+
+  if (lockFd === undefined) {
+    throw new Error(
+      `Could not acquire CA lockfile at ${lockPath} after retries; remove it manually if stale.`,
+    );
+  }
+
+  try {
+    // Re-check under the lock — another process may have written between
+    // our pre-lock inspect and now.
+    if (inspectCa(paths) !== 'usable') {
+      generateCa(paths);
+    }
+  } finally {
+    fs.closeSync(lockFd);
+    try {
+      fs.unlinkSync(lockPath);
+    } catch {
+      // Already gone.
+    }
+  }
+
   return paths;
 }

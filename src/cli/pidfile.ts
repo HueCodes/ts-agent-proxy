@@ -22,7 +22,35 @@ export function pidfilePath(dir: string = resolveCaCacheDir()): string {
 
 export function writePidfile(payload: PidfilePayload, file: string = pidfilePath()): void {
   fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
-  fs.writeFileSync(file, JSON.stringify(payload), { mode: 0o600 });
+  // Atomic write: tmp + rename so a concurrent reader never sees a torn JSON.
+  const tmp = `${file}.tmp.${process.pid}`;
+  fs.writeFileSync(tmp, JSON.stringify(payload), { mode: 0o600 });
+  fs.renameSync(tmp, file);
+}
+
+/**
+ * Per-pid pidfile path. The shared run.pid points to whichever proxy
+ * `tail` should attach to (the most recent one); the per-pid file lets
+ * the owning process clean up only its own entry on shutdown.
+ */
+export function perPidFilePath(pid: number = process.pid, dir?: string): string {
+  return path.join(path.dirname(pidfilePath(dir)), `run.${pid}.pid`);
+}
+
+/**
+ * Refuse to start a second `run` if a live one already holds the
+ * canonical pidfile. Returns the existing pid + admin URL when one is
+ * found and alive; null otherwise.
+ *
+ * Stale pidfiles (process gone) are removed automatically.
+ */
+export function checkForLiveRun(file: string = pidfilePath()): PidfilePayload | null {
+  const existing = readPidfile(file);
+  if (!existing) return null;
+  if (isProcessAlive(existing.pid)) return existing;
+  // Stale: pid is gone, remove it so the next writer can claim the slot.
+  removePidfile(file);
+  return null;
 }
 
 export function readPidfile(file: string = pidfilePath()): PidfilePayload | null {

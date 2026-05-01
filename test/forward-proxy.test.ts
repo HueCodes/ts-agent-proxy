@@ -34,6 +34,7 @@ function createMockAllowlistMatcher(defaultResult?: Partial<MatchResult>) {
     match: vi.fn().mockReturnValue(result),
     isDomainAllowed: vi.fn().mockReturnValue(result),
     checkDnsRebinding: vi.fn().mockResolvedValue(null),
+    resolveAndCheckHost: vi.fn().mockResolvedValue({ kind: 'pass' }),
     reload: vi.fn(),
   } as any;
 }
@@ -923,7 +924,9 @@ describe('ForwardProxy', () => {
       await proxy.handleRequest(req, res);
 
       const callArgs = httpRequestSpy.mock.calls[0]![0] as any;
-      expect(callArgs.hostname).toBe('api.example.com');
+      // The proxy switched to using `host` instead of `hostname` so it can
+      // dial a pinned IP while keeping the original name in the Host header.
+      expect(callArgs.host).toBe('api.example.com');
       expect(callArgs.path).toBe('/v1/test?q=1');
     });
 
@@ -937,7 +940,7 @@ describe('ForwardProxy', () => {
       await proxy.handleRequest(req, res);
 
       const callArgs = httpRequestSpy.mock.calls[0]![0] as any;
-      expect(callArgs.hostname).toBe('api.example.com');
+      expect(callArgs.host).toBe('api.example.com');
       expect(callArgs.path).toBe('/v1/data');
     });
 

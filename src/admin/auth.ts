@@ -60,8 +60,16 @@ export class AdminAuth {
       };
     }
 
-    // Check if this endpoint requires authentication
-    const protectedEndpoints = this.config.protectedEndpoints ?? ['/metrics', '/config'];
+    // Check if this endpoint requires authentication. /api/audit/stream is in
+    // the default list because the stream carries scrubbed-but-still-sensitive
+    // request bodies and headers — leaving it open would let any process that
+    // can reach the admin port observe agent traffic.
+    const protectedEndpoints = this.config.protectedEndpoints ?? [
+      '/metrics',
+      '/config',
+      '/api/audit/stream',
+      '/api',
+    ];
     const isProtected = protectedEndpoints.some((ep) => path === ep || path.startsWith(ep + '/'));
 
     if (!isProtected) {
@@ -330,6 +338,9 @@ export function createAdminAuth(config: AdminAuthConfig, logger: Logger): AdminA
  */
 export const DEFAULT_ADMIN_AUTH_CONFIG: AdminAuthConfig = {
   method: 'none',
-  protectedEndpoints: ['/metrics', '/config'],
+  // /api/audit/stream and the /api/* surface carry sensitive request data
+  // and must be authenticated whenever auth is enabled. Operators using
+  // method:'none' explicitly opt into open access.
+  protectedEndpoints: ['/metrics', '/config', '/api/audit/stream', '/api'],
   rateLimitPerMinute: 60,
 };

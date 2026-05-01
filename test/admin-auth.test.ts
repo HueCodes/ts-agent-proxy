@@ -338,4 +338,22 @@ describe('DEFAULT_ADMIN_AUTH_CONFIG', () => {
     expect(DEFAULT_ADMIN_AUTH_CONFIG.protectedEndpoints).toContain('/metrics');
     expect(DEFAULT_ADMIN_AUTH_CONFIG.rateLimitPerMinute).toBe(60);
   });
+
+  it('protects /api/audit/stream by default', () => {
+    expect(DEFAULT_ADMIN_AUTH_CONFIG.protectedEndpoints).toContain('/api/audit/stream');
+  });
+
+  it('rejects unauthenticated /api/audit/stream when bearer auth is configured', async () => {
+    const auth = new AdminAuth(
+      {
+        method: 'bearer',
+        bearerToken: 'expected',
+        rateLimitPerMinute: 60,
+      },
+      mockLogger,
+    );
+    const req = createMockRequest({ url: '/api/audit/stream' });
+    const result = await auth.authenticate(req);
+    expect(result.authenticated).toBe(false);
+  });
 });

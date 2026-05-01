@@ -21,8 +21,42 @@ import { DomainTrie, createDomainTrie } from './domain-trie.js';
 
 const DNS_CACHE_TTL_MS = 30_000;
 
+/**
+ * Normalize a hostname for matching. Strips IPv6 brackets, lowercases, removes
+ * a single trailing dot, and rewrites IPv4-mapped IPv6 (`::ffff:169.254.169.254`
+ * or `::ffff:a9fe:a9fe`) to its plain IPv4 form so the safe-default IPv4
+ * blocklist matches both literal forms.
+ *
+ * Without the IPv4-mapped collapse, an attacker reaches IMDS via
+ * `https://[::ffff:169.254.169.254]/` because the IPv6 host doesn't intersect
+ * the IPv4 CIDR rules.
+ */
+export function normalizeHost(host: string): string {
+  let h = host.trim().toLowerCase();
+  // Strip IPv6 brackets — matchers expect bare addresses.
+  if (h.startsWith('[') && h.endsWith(']')) h = h.slice(1, -1);
+  // Single trailing dot is the FQDN form; resolvers and HTTP stacks accept it.
+  if (h.endsWith('.') && !h.endsWith('..')) h = h.slice(0, -1);
+  // IPv4-mapped IPv6: dotted-quad form (::ffff:1.2.3.4).
+  const dottedMapped = /^::ffff:(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})$/i.exec(h);
+  if (dottedMapped) return dottedMapped[1]!;
+  // IPv4-mapped IPv6: hex form (::ffff:a9fe:a9fe).
+  const hexMapped = /^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/i.exec(h);
+  if (hexMapped) {
+    const hi = parseInt(hexMapped[1]!, 16);
+    const lo = parseInt(hexMapped[2]!, 16);
+    if (hi >= 0 && hi <= 0xffff && lo >= 0 && lo <= 0xffff) {
+      return [hi >> 8, hi & 0xff, lo >> 8, lo & 0xff].join('.');
+    }
+  }
+  // IPv4-compatible IPv6: ::1.2.3.4 (deprecated but still accepted by resolvers).
+  const compat = /^::(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})$/.exec(h);
+  if (compat) return compat[1]!;
+  return h;
+}
+
 function isLiteralIp(host: string): boolean {
-  // Crude but sufficient: IPv4 dotted quad or anything containing a colon (IPv6).
+  // host is expected to be normalizeHost()'d at the call site.
   if (host.includes(':')) return true;
   return /^(\d{1,3}\.){3}\d{1,3}$/.test(host);
 }
@@ -169,19 +203,24 @@ export class AllowlistMatcher {
    * ```
    */
   match(request: RequestInfo): MatchResult {
+    // Normalize host once so every layer below sees the same canonical form
+    // (IPv6 brackets stripped, trailing dot removed, ::ffff:1.2.3.4 mapped
+    // to plain IPv4). Without this, ::ffff:169.254.169.254 evades IMDS.
+    const normalized: RequestInfo = { ...request, host: normalizeHost(request.host) };
+
     // 1. User-explicit blocks always win.
-    const userBlock = this.matchesUserBlock(request);
+    const userBlock = this.matchesUserBlock(normalized);
     if (userBlock) {
       return { allowed: false, reason: userBlock };
     }
 
     // 2. Allow rules. Use domain trie for fast candidate lookup.
-    const candidateRules = this.domainTrie.findMatchingRules(request.host);
+    const candidateRules = this.domainTrie.findMatchingRules(normalized.host);
 
     if (candidateRules.length > 0) {
       for (const rule of candidateRules) {
         if (rule.enabled === false) continue;
-        if (this.matchesRuleDetails(request, rule)) {
+        if (this.matchesRuleDetails(normalized, rule)) {
           return {
             allowed: true,
             matchedRule: rule,
@@ -194,7 +233,7 @@ export class AllowlistMatcher {
     const enabledRules = this.config.rules.filter((r) => r.enabled !== false);
     for (const rule of enabledRules) {
       if (candidateRules.includes(rule)) continue;
-      if (this.matchesRule(request, rule)) {
+      if (this.matchesRule(normalized, rule)) {
         return {
           allowed: true,
           matchedRule: rule,
@@ -204,7 +243,7 @@ export class AllowlistMatcher {
     }
 
     // 3. Safe-default blocks (user allow rules already had their chance above).
-    const safeBlock = this.matchesSafeDefault(request);
+    const safeBlock = this.matchesSafeDefault(normalized);
     if (safeBlock) {
       return { allowed: false, reason: safeBlock };
     }
@@ -273,32 +312,65 @@ export class AllowlistMatcher {
    * deny-fail-closed if appropriate.
    */
   async checkDnsRebinding(host: string): Promise<string | null> {
-    const safe = this.config.safeDefaults;
-    if (!safe?.enabled) return null;
-    if (this.safeDefaultIpMatcher === null) return null;
-    if (isLiteralIp(host)) return null; // already handled by sync match
+    const result = await this.resolveAndCheckHost(host);
+    return result.kind === 'block' ? result.reason : null;
+  }
+
+  /**
+   * Resolve a hostname and check the resolved IPs against the safe-default
+   * IP blocklist + the user-block IP list. Returns either a block decision
+   * or a pinned IP that callers should connect to (rather than re-resolving
+   * via the kernel, which is the TOCTOU window an attacker exploits).
+   */
+  async resolveAndCheckHost(
+    host: string,
+  ): Promise<
+    { kind: 'pass' } | { kind: 'pinned'; ip: string } | { kind: 'block'; reason: string }
+  > {
+    const normalized = normalizeHost(host);
+    if (isLiteralIp(normalized)) return { kind: 'pass' }; // sync match already handled
 
     let ips: string[];
-    const cached = this.dnsCache.get(host);
+    const cached = this.dnsCache.get(normalized);
     const now = Date.now();
     if (cached && cached.expiresAt > now) {
       ips = cached.ips;
     } else {
       try {
-        const records = await dns.lookup(host, { all: true, verbatim: true });
-        ips = records.map((r) => r.address);
+        const records = await dns.lookup(normalized, { all: true, verbatim: true });
+        ips = records.map((r) => normalizeHost(r.address));
       } catch {
-        return null; // resolution failed; let the upstream connect surface the error
+        return { kind: 'pass' }; // upstream connect will surface the error
       }
-      this.dnsCache.set(host, { ips, expiresAt: now + DNS_CACHE_TTL_MS });
+      // Soft cap to avoid memory growth from probing thousands of distinct
+      // hostnames within a single TTL window.
+      if (this.dnsCache.size >= 10_000) this.dnsCache.clear();
+      this.dnsCache.set(normalized, { ips, expiresAt: now + DNS_CACHE_TTL_MS });
     }
 
+    const safe = this.config.safeDefaults;
+    const safeEnabled = !!safe?.enabled && this.safeDefaultIpMatcher !== null;
+
     for (const ip of ips) {
-      if (this.safeDefaultIpMatcher.matches(ip)) {
-        return `safe-default: DNS rebinding — ${host} resolved to blocked IP ${ip}`;
+      if (safeEnabled && this.safeDefaultIpMatcher!.matches(ip)) {
+        return {
+          kind: 'block',
+          reason: `safe-default: DNS rebinding — ${normalized} resolved to blocked IP ${ip}`,
+        };
+      }
+      if (this.blockIpMatcher && this.blockIpMatcher.matches(ip)) {
+        return {
+          kind: 'block',
+          reason: `Blocked by user policy: ${normalized} resolved to blocked IP ${ip}`,
+        };
       }
     }
-    return null;
+
+    // Pin the first resolved IP so the caller can connect to a fixed address
+    // instead of letting the kernel re-resolve to a different (possibly
+    // malicious) record.
+    const first = ips[0];
+    return first ? { kind: 'pinned', ip: first } : { kind: 'pass' };
   }
 
   /**

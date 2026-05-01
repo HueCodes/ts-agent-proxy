@@ -75,6 +75,8 @@ function createMockAllowlistMatcher(
         reason: 'Allowed by test',
         matchedRule: { id: 'test-rule' },
       }),
+    resolveAndCheckHost: vi.fn().mockResolvedValue({ kind: 'pass' }),
+    checkDnsRebinding: vi.fn().mockResolvedValue(null),
     // unused methods expected by the type
     addRule: vi.fn(),
     removeRule: vi.fn(),
@@ -383,7 +385,9 @@ describe('MitmInterceptor', () => {
 
       expect(https.request).toHaveBeenCalledWith(
         expect.objectContaining({
-          hostname: 'example.com',
+          // Switched from `hostname` to `host` so the proxy can dial a
+          // pinned IP while preserving SNI for the original name.
+          host: 'example.com',
           port: 8443,
           path: '/resource',
           method: 'PUT',

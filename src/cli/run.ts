@@ -15,7 +15,7 @@ import { createLogger } from '../logging/logger.js';
 import { applySafeDefaults } from '../profiles/safe-defaults.js';
 import { getProfile, mergeProfile } from '../profiles/index.js';
 import { ensureCa, type CaPaths } from './ca-cache.js';
-import { writePidfile, removePidfile } from './pidfile.js';
+import { writePidfile, removePidfile, checkForLiveRun, pidfilePath } from './pidfile.js';
 
 export interface RunOptions {
   /** Profile name (e.g., 'claude-code'). Default: 'generic-agent'. */
@@ -148,7 +148,39 @@ export async function runUnderProxy(opts: RunOptions): Promise<RunResult> {
     throw new Error('No child command provided. Usage: ts-agent-proxy run -- <command> [args...]');
   }
 
+  // Refuse to start a second `run` when one is already live: the pidfile is
+  // single-slot, so a concurrent run would clobber it and `tail` would attach
+  // to the wrong proxy. (Stale pidfiles from crashed runs are auto-removed.)
+  const existing = checkForLiveRun();
+  if (existing) {
+    throw new Error(
+      `Another ts-agent-proxy run is already live (pid ${existing.pid}, admin ${existing.adminUrl}). ` +
+        `Stop it first, or remove ${pidfilePath()} if it's stale.`,
+    );
+  }
+
+  // Install signal handlers BEFORE any setup that takes time (CA generation,
+  // port acquisition, server start, child spawn). Without this, a SIGINT
+  // arriving during startup uses Node's default handler — process exits, the
+  // pidfile/CA lockfile leaks, and any partly-spawned child is orphaned with
+  // HTTPS_PROXY pointing at a dead port.
+  let shutdownSignal: NodeJS.Signals | null = null;
+  let shutdownRequested = false;
+  const shutdownPromise = new Promise<NodeJS.Signals>((resolve) => {
+    const handler = (sig: NodeJS.Signals): void => {
+      shutdownSignal = sig;
+      shutdownRequested = true;
+      resolve(sig);
+    };
+    process.once('SIGINT', () => handler('SIGINT'));
+    process.once('SIGTERM', () => handler('SIGTERM'));
+  });
+
   const caPaths = ensureCa();
+  if (shutdownRequested) {
+    return { exitCode: 130, address: { host: '127.0.0.1', port: 0 }, caPaths };
+  }
+
   const port = opts.port ?? (await pickFreePort());
   const adminPort = await pickFreePort();
   const config = buildConfig(opts, caPaths, port, adminPort);
@@ -164,12 +196,24 @@ export async function runUnderProxy(opts: RunOptions): Promise<RunResult> {
   });
   await server.start();
 
+  if (shutdownRequested) {
+    await server.stop().catch(() => undefined);
+    return { exitCode: 130, address: { host: '127.0.0.1', port }, caPaths };
+  }
+
   // Pidfile lets `ts-agent-proxy tail` discover this run automatically.
   writePidfile({
     pid: process.pid,
     adminUrl,
     startedAt: new Date().toISOString(),
   });
+
+  if (process.platform === 'win32') {
+    logger.warn(
+      'On Windows, Ctrl-C terminates the agent abruptly. The 10s grace ' +
+        'window does not apply (Node-on-Windows lacks Unix-style signals).',
+    );
+  }
 
   logger.info(
     { proxyUrl, adminUrl, profile: opts.profile, command: opts.command.join(' ') },
@@ -184,9 +228,16 @@ export async function runUnderProxy(opts: RunOptions): Promise<RunResult> {
 
   let exitCode: number;
   try {
-    exitCode = await orchestrateLifecycle(child, server);
+    exitCode = await orchestrateLifecycle(child, server, shutdownPromise);
   } finally {
     removePidfile();
+  }
+
+  // If a signal interrupted us before the child surfaced its own exit, prefer
+  // the conventional 128+signum so callers can tell signal-death from a
+  // genuine 0 exit.
+  if (shutdownSignal && exitCode === 0) {
+    exitCode = 128 + (signalNum(shutdownSignal) ?? 0);
   }
 
   return {
@@ -202,13 +253,21 @@ const SHUTDOWN_GRACE_MS = 10_000;
  * Wire up signal forwarding and shutdown sequencing. Returns the child's
  * exit code (or a synthetic code on signal-only termination).
  */
-async function orchestrateLifecycle(child: ChildProcess, server: ProxyServer): Promise<number> {
+async function orchestrateLifecycle(
+  child: ChildProcess,
+  server: ProxyServer,
+  shutdownPromise: Promise<NodeJS.Signals>,
+): Promise<number> {
   let shuttingDown = false;
+  let spawnError: Error | undefined;
+  let killTimer: NodeJS.Timeout | undefined;
+  let secondSignalSeen = false;
 
   return new Promise<number>((resolve) => {
-    const finalize = async (code: number) => {
+    const finalize = async (code: number): Promise<void> => {
       if (shuttingDown) return;
       shuttingDown = true;
+      if (killTimer) clearTimeout(killTimer);
       try {
         await server.stop();
       } catch {
@@ -218,13 +277,35 @@ async function orchestrateLifecycle(child: ChildProcess, server: ProxyServer): P
     };
 
     child.on('exit', (code, signal) => {
-      // Convention: signal-killed children produce 128+signum (POSIX-ish).
-      const exitCode = code ?? (signal ? 128 + (signalNum(signal) ?? 0) : 0);
+      // If `error` fired first (e.g. ENOENT) the child never really ran;
+      // surface a non-zero exit even when both code and signal are null.
+      if (spawnError) {
+        void finalize(127);
+        return;
+      }
+      const exitCode = code ?? (signal ? 128 + (signalNum(signal) ?? 0) : 1);
       void finalize(exitCode);
     });
-    child.on('error', () => void finalize(1));
+    child.on('error', (err) => {
+      spawnError = err;
+      // ENOENT: command not found is the canonical 127 in shells.
+      const code = (err as NodeJS.ErrnoException).code === 'ENOENT' ? 127 : 1;
+      void finalize(code);
+    });
 
-    const forward = (sig: NodeJS.Signals) => {
+    const forward = (sig: NodeJS.Signals): void => {
+      if (secondSignalSeen) {
+        // Second Ctrl-C means the user wants out now, not in 10s.
+        if (child.pid && !child.killed) {
+          try {
+            process.kill(child.pid, 'SIGKILL');
+          } catch {
+            // Ignore.
+          }
+        }
+        return;
+      }
+      secondSignalSeen = true;
       if (!child.killed && child.pid) {
         try {
           process.kill(child.pid, sig);
@@ -232,8 +313,9 @@ async function orchestrateLifecycle(child: ChildProcess, server: ProxyServer): P
           // Child may have already exited.
         }
       }
-      // Last-resort kill if child does not exit within the grace window.
-      setTimeout(() => {
+      // Last-resort kill if child doesn't exit within the grace window.
+      // (No-op on Windows where process.kill is already a hard kill.)
+      killTimer = setTimeout(() => {
         if (!child.killed && child.pid) {
           try {
             process.kill(child.pid, 'SIGKILL');
@@ -241,9 +323,12 @@ async function orchestrateLifecycle(child: ChildProcess, server: ProxyServer): P
             // Ignore.
           }
         }
-      }, SHUTDOWN_GRACE_MS).unref();
+      }, SHUTDOWN_GRACE_MS);
+      killTimer.unref();
     };
 
+    void shutdownPromise.then(forward);
+    // A second signal escalates to immediate hard-kill.
     process.on('SIGINT', () => forward('SIGINT'));
     process.on('SIGTERM', () => forward('SIGTERM'));
   });

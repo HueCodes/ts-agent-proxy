@@ -70,15 +70,17 @@ export class ConnectHandler {
       return;
     }
 
-    // DNS rebinding defense: even an allowed hostname must not resolve to a
-    // safe-default-blocked IP (e.g. evil.com -> 169.254.169.254).
-    const rebindingReason = await this.options.allowlistMatcher.checkDnsRebinding(host);
-    if (rebindingReason !== null) {
-      const rebindingResult = { allowed: false, reason: rebindingReason };
+    // DNS rebinding defense: resolve the hostname here, check the resolved
+    // IP against the blocklist, and pin it so the upstream connect can't be
+    // re-resolved by the kernel to a different (possibly malicious) record.
+    const resolved = await this.options.allowlistMatcher.resolveAndCheckHost(host);
+    if (resolved.kind === 'block') {
+      const rebindingResult = { allowed: false, reason: resolved.reason };
       this.options.auditLogger.logRequest(requestInfo, rebindingResult, Date.now() - startTime);
-      this.sendForbidden(clientSocket, rebindingReason);
+      this.sendForbidden(clientSocket, resolved.reason);
       return;
     }
+    const dialAddress = resolved.kind === 'pinned' ? resolved.ip : host;
 
     // Check rate limit
     const rateLimitKey = `${matchResult.matchedRule?.id ?? 'default'}:${sourceIp}`;
@@ -93,9 +95,10 @@ export class ConnectHandler {
       return;
     }
 
-    // Establish tunnel to target
+    // Establish tunnel to target. Connect to the pinned IP (rebinding defense)
+    // but log the original hostname for audit clarity.
     try {
-      await this.createTunnel(clientSocket, head, host, port, requestInfo, startTime);
+      await this.createTunnel(clientSocket, head, host, dialAddress, port, requestInfo, startTime);
     } catch (error) {
       this.options.auditLogger.logError(
         requestInfo,
@@ -144,6 +147,7 @@ export class ConnectHandler {
     clientSocket: Socket,
     head: Buffer,
     host: string,
+    dialAddress: string,
     port: number,
     requestInfo: RequestInfo,
     startTime: number,
@@ -194,7 +198,7 @@ export class ConnectHandler {
         clientSocket.destroy();
       }, this.timeouts.connectTimeout);
 
-      const serverSocket = net.connect(port, host, () => {
+      const serverSocket = net.connect(port, dialAddress, () => {
         // Clear connect timeout
         if (connectTimeoutId) {
           clearTimeout(connectTimeoutId);

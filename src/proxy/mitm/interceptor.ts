@@ -67,6 +67,18 @@ export class MitmInterceptor {
       return;
     }
 
+    // DNS rebinding defense: resolve once and pin the IP. The upstream TLS
+    // connection in forwardRequest() uses this pinned address so the kernel
+    // can't re-resolve to a blocked record after our check passed.
+    const resolved = await this.options.allowlistMatcher.resolveAndCheckHost(host);
+    if (resolved.kind === 'block') {
+      const blockResult = { allowed: false, reason: resolved.reason };
+      this.options.auditLogger.logRequest({ host, port, sourceIp }, blockResult, { durationMs: 0 });
+      this.sendForbidden(clientSocket, resolved.reason);
+      return;
+    }
+    const pinnedIp = resolved.kind === 'pinned' ? resolved.ip : undefined;
+
     try {
       // Generate certificate for this domain
       const certInfo = this.options.certManager.generateCertForDomain(host);
@@ -89,7 +101,7 @@ export class MitmInterceptor {
       });
 
       // Handle the TLS connection
-      this.handleTlsConnection(tlsSocket, host, port, sourceIp);
+      this.handleTlsConnection(tlsSocket, host, port, sourceIp, pinnedIp);
     } catch (error) {
       this.options.logger.error({ error, host }, 'MITM setup failed');
       this.sendError(clientSocket, 'Failed to establish secure connection');
@@ -104,6 +116,7 @@ export class MitmInterceptor {
     targetHost: string,
     targetPort: number,
     sourceIp: string,
+    pinnedIp?: string,
   ): void {
     // Create robust HTTP parser with size limits
     const parser = new HttpRequestParser({
@@ -211,6 +224,7 @@ export class MitmInterceptor {
           request,
           requestInfo,
           startTime,
+          pinnedIp,
         );
         this.prepareForNextRequest(clientSocket, parser);
       } catch (error) {
@@ -267,6 +281,7 @@ export class MitmInterceptor {
     request: ParsedHttpRequest,
     requestInfo: RequestInfo,
     startTime: number,
+    pinnedIp?: string,
   ): Promise<void> {
     return new Promise((resolve, reject) => {
       let connectTimeoutId: NodeJS.Timeout | undefined;
@@ -295,14 +310,20 @@ export class MitmInterceptor {
         }
       };
 
-      const options: https.RequestOptions = {
-        hostname: targetHost,
+      // When we've pre-resolved the host, dial the pinned IP so a hostile
+      // resolver can't swap in a blocked address between our check and the
+      // upstream connect. SNI + Host header keep the original hostname.
+      const headers = { ...request.headers };
+      if (pinnedIp) headers['host'] = `${targetHost}${targetPort === 443 ? '' : `:${targetPort}`}`;
+      const options: https.RequestOptions & { servername?: string } = {
+        host: pinnedIp ?? targetHost,
         port: targetPort,
         path: request.path,
         method: request.method,
-        headers: request.headers,
+        headers,
         rejectUnauthorized: true,
         timeout: this.timeouts.connectTimeout,
+        ...(pinnedIp ? { servername: targetHost } : {}),
       };
 
       // Set connect timeout

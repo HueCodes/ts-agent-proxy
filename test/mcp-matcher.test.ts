@@ -46,7 +46,10 @@ describe('parseJsonRpc', () => {
     const got = parseJsonRpc('{"jsonrpc":"2.0","id":1,"method":"tools/list"}');
     expect(got).not.toBeNull();
     expect(got!.length).toBe(1);
-    expect(got![0]!.method).toBe('tools/list');
+    expect(got![0]).toEqual({
+      kind: 'request',
+      request: { jsonrpc: '2.0', id: 1, method: 'tools/list' },
+    });
   });
 
   it('parses a batch', () => {
@@ -54,24 +57,42 @@ describe('parseJsonRpc', () => {
       '[{"jsonrpc":"2.0","id":1,"method":"a"},{"jsonrpc":"2.0","id":2,"method":"b"}]',
     );
     expect(got!.length).toBe(2);
+    expect(got!.every((e) => e.kind === 'request')).toBe(true);
   });
 
-  it('returns null for malformed JSON', () => {
+  it('returns null only when the outer JSON is unparseable', () => {
     expect(parseJsonRpc('not json')).toBeNull();
   });
 
-  it('returns null when jsonrpc != 2.0', () => {
-    expect(parseJsonRpc('{"jsonrpc":"1.0","method":"x"}')).toBeNull();
+  it('marks an envelope with wrong jsonrpc version as invalid (does not null the batch)', () => {
+    const got = parseJsonRpc('{"jsonrpc":"1.0","method":"x","id":99}');
+    expect(got).not.toBeNull();
+    expect(got!.length).toBe(1);
+    expect(got![0]!.kind).toBe('invalid');
+    expect((got![0] as { id: number | string | null }).id).toBe(99);
   });
 
-  it('returns null when method is missing', () => {
-    expect(parseJsonRpc('{"jsonrpc":"2.0","id":1}')).toBeNull();
+  it('marks an envelope with no method as invalid', () => {
+    const got = parseJsonRpc('{"jsonrpc":"2.0","id":1}');
+    expect(got![0]!.kind).toBe('invalid');
   });
 
-  it('preserves notifications (no id)', () => {
+  it('preserves notifications (no id) as valid requests', () => {
     const got = parseJsonRpc('{"jsonrpc":"2.0","method":"notify"}');
     expect(got).not.toBeNull();
-    expect(got![0]!.id).toBeUndefined();
+    expect(got![0]!.kind).toBe('request');
+    if (got![0]!.kind === 'request') {
+      expect(got![0]!.request.id).toBeUndefined();
+    }
+  });
+
+  it('keeps the valid envelopes in a mixed batch', () => {
+    const got = parseJsonRpc(
+      '[{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"read_file"}},{"jsonrpc":"1.0","method":"sneaky","id":2}]',
+    );
+    expect(got!.length).toBe(2);
+    expect(got![0]!.kind).toBe('request');
+    expect(got![1]!.kind).toBe('invalid');
   });
 });
 

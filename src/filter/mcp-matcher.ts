@@ -72,27 +72,48 @@ export function looksLikeMcp(opts: {
 }
 
 /**
- * Parse a JSON-RPC request envelope. Returns null for unparseable input or
- * shapes that don't match the spec.
- *
- * Batch requests are returned as an array of envelopes; single requests
- * yield a one-element array. Notifications (no id) are kept — callers can
- * filter them out.
+ * One element of a parsed JSON-RPC batch. Either a valid request or an
+ * error placeholder identifying the original (best-effort) id so the gate
+ * can return per-element errors as the spec requires.
  */
-export function parseJsonRpc(body: string): JsonRpcRequest[] | null {
+export type ParsedJsonRpcEntry =
+  | { kind: 'request'; request: JsonRpcRequest }
+  | { kind: 'invalid'; id: string | number | null; reason: string };
+
+/**
+ * Parse a JSON-RPC request envelope or batch. Returns null only when the
+ * outer JSON itself can't be parsed — at which point there is no envelope
+ * structure to gate on.
+ *
+ * For batches, each element is parsed independently. A malformed envelope
+ * inside an otherwise-valid batch yields a `{ kind: 'invalid' }` entry; the
+ * caller can deny that entry while still gating valid ones, instead of
+ * failing the whole batch (which would let an attacker bypass tool gating
+ * by appending one bad envelope).
+ */
+export function parseJsonRpc(body: string): ParsedJsonRpcEntry[] | null {
   let data: unknown;
   try {
     data = JSON.parse(body);
   } catch {
     return null;
   }
-  const arr = Array.isArray(data) ? data : [data];
-  const out: JsonRpcRequest[] = [];
-  for (const item of arr) {
-    if (!isJsonRpcRequest(item)) return null;
-    out.push(item);
+  const items = Array.isArray(data) ? data : [data];
+  return items.map((item): ParsedJsonRpcEntry => {
+    if (isJsonRpcRequest(item)) {
+      return { kind: 'request', request: item };
+    }
+    const id = extractIdBestEffort(item);
+    return { kind: 'invalid', id, reason: 'malformed JSON-RPC envelope' };
+  });
+}
+
+function extractIdBestEffort(value: unknown): string | number | null {
+  if (value !== null && typeof value === 'object') {
+    const id = (value as Record<string, unknown>).id;
+    if (typeof id === 'string' || typeof id === 'number') return id;
   }
-  return out;
+  return null;
 }
 
 function isJsonRpcRequest(value: unknown): value is JsonRpcRequest {

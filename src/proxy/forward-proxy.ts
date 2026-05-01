@@ -155,15 +155,17 @@ export class ForwardProxy {
       return;
     }
 
-    // DNS rebinding defense: even an allowed hostname must not resolve to a
-    // safe-default-blocked IP.
-    const rebindingReason = await this.options.allowlistMatcher.checkDnsRebinding(requestInfo.host);
-    if (rebindingReason !== null) {
-      const rebindingResult = { allowed: false, reason: rebindingReason };
+    // DNS rebinding defense: resolve once here, deny if the resolved IP is in
+    // the blocklist, otherwise pin it so the upstream connect can't be
+    // re-resolved by Node's resolver to a different (possibly malicious) IP.
+    const resolved = await this.options.allowlistMatcher.resolveAndCheckHost(requestInfo.host);
+    if (resolved.kind === 'block') {
+      const rebindingResult = { allowed: false, reason: resolved.reason };
       this.options.auditLogger.logRequest(requestInfo, rebindingResult, Date.now() - startTime);
-      sendJsonError(res, 403, 'DNS_REBINDING_BLOCKED', rebindingReason, requestId);
+      sendJsonError(res, 403, 'DNS_REBINDING_BLOCKED', resolved.reason, requestId);
       return;
     }
+    const pinnedIp = resolved.kind === 'pinned' ? resolved.ip : undefined;
 
     // Check rate limit
     const rateLimitKey = `${matchResult.matchedRule?.id ?? 'default'}:${requestInfo.sourceIp}`;
@@ -183,7 +185,7 @@ export class ForwardProxy {
 
     // Forward the request with timeout and size limits
     try {
-      await this.forwardRequest(req, res, url, requestInfo, startTime);
+      await this.forwardRequest(req, res, url, requestInfo, startTime, pinnedIp);
     } catch (error) {
       this.options.auditLogger.logError(
         requestInfo,
@@ -266,6 +268,7 @@ export class ForwardProxy {
     targetUrl: URL,
     requestInfo: RequestInfo,
     startTime: number,
+    pinnedIp?: string,
   ): Promise<void> {
     return new Promise((resolve, reject) => {
       const transport = targetUrl.protocol === 'https:' ? https : http;
@@ -297,15 +300,23 @@ export class ForwardProxy {
       // Get the appropriate agent from the connection pool
       const agent = this.connectionPool.getAgentForProtocol(targetUrl.protocol);
 
-      // Build proxy request options with connection pooling
-      const options: http.RequestOptions = {
-        hostname: targetUrl.hostname,
+      // Build proxy request options with connection pooling. When we've
+      // pre-resolved the host, dial the pinned IP directly but keep the
+      // hostname in the Host header (HTTP/1.1) and SNI (HTTPS) so the
+      // upstream still sees the original name. Without this pinning, Node's
+      // resolver runs again here and a hostile DNS server can swap in a
+      // blocked IP after our check passed.
+      const headers = this.filterHeaders(clientReq.headers);
+      if (pinnedIp) headers['host'] = targetUrl.host;
+      const options: http.RequestOptions & { servername?: string } = {
+        host: pinnedIp ?? targetUrl.hostname,
         port: targetUrl.port || (targetUrl.protocol === 'https:' ? 443 : 80),
         path: targetUrl.pathname + targetUrl.search,
         method: clientReq.method,
-        headers: this.filterHeaders(clientReq.headers),
+        headers,
         timeout: this.timeouts.connectTimeout,
         agent,
+        ...(pinnedIp && targetUrl.protocol === 'https:' ? { servername: targetUrl.hostname } : {}),
       };
 
       const proxyReq = transport.request(options, (proxyRes) => {
