@@ -35,7 +35,9 @@ export interface CircuitBreakerConfig {
   /** Maximum concurrent requests in half-open state (default: 1) */
   halfOpenMaxConcurrent?: number | undefined;
   /** Optional callback on state change */
-  onStateChange?: ((key: string, oldState: CircuitState, newState: CircuitState) => void) | undefined;
+  onStateChange?:
+    | ((key: string, oldState: CircuitState, newState: CircuitState) => void)
+    | undefined;
   /** Optional callback on failure */
   onFailure?: ((key: string, error: Error) => void) | undefined;
   /** Optional callback on success */

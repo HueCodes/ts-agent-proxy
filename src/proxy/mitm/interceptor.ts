@@ -18,11 +18,7 @@ import type { RequestInfo } from '../../types/allowlist.js';
 import type { LimitsConfig, TimeoutsConfig } from '../../types/config.js';
 import { DEFAULT_LIMITS, DEFAULT_TIMEOUTS } from '../../types/config.js';
 import { CertManager } from './cert-manager.js';
-import {
-  HttpRequestParser,
-  HttpParseError,
-  type ParsedHttpRequest,
-} from '../http-parser.js';
+import { HttpRequestParser, HttpParseError, type ParsedHttpRequest } from '../http-parser.js';
 import { SizeLimitExceededError, TimeoutError } from '../size-limiter.js';
 
 export interface MitmInterceptorOptions {

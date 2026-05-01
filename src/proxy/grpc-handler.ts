@@ -247,10 +247,7 @@ export class GrpcHandler {
       await this.proxyToUpstream(stream, headers, host, port, grpcPath, requestInfo, matchResult);
     } catch (error) {
       this.config.logger.error({ error, host, service: grpcPath.fullService }, 'gRPC proxy error');
-      this.config.auditLogger.logError(
-        requestInfo,
-        error instanceof Error ? error : String(error),
-      );
+      this.config.auditLogger.logError(requestInfo, error instanceof Error ? error : String(error));
 
       if (!stream.destroyed) {
         this.sendGrpcError(stream, GrpcStatus.UNAVAILABLE, 'Upstream connection failed');

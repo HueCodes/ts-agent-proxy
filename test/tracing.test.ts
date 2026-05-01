@@ -446,11 +446,7 @@ describe('TracingManager', () => {
 
       manager.startProxySpan('test');
 
-      expect(mockTracer.startSpan).toHaveBeenCalledWith(
-        'test',
-        expect.anything(),
-        activeCtx,
-      );
+      expect(mockTracer.startSpan).toHaveBeenCalledWith('test', expect.anything(), activeCtx);
     });
   });
 

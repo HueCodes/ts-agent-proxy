@@ -32,7 +32,9 @@ function createMockAuditLogger() {
   } as any;
 }
 
-function createMockAllowlistMatcher(overrides: Partial<{ allowed: boolean; reason: string; matchedRule: any }> = {}) {
+function createMockAllowlistMatcher(
+  overrides: Partial<{ allowed: boolean; reason: string; matchedRule: any }> = {},
+) {
   const { allowed = true, reason = 'Allowed by rule', matchedRule = undefined } = overrides;
   return {
     match: vi.fn().mockReturnValue({ allowed, reason, matchedRule }),
@@ -177,7 +179,9 @@ describe('GrpcWebHandler', () => {
       const body = res.end.mock.calls[0][0] as Buffer;
       expect(body[0]).toBe(0x80); // trailer flag
       const trailerLen = body.readUInt32BE(1);
-      const trailerStr = body.slice(GRPC_FRAME_HEADER_SIZE, GRPC_FRAME_HEADER_SIZE + trailerLen).toString('utf-8');
+      const trailerStr = body
+        .slice(GRPC_FRAME_HEADER_SIZE, GRPC_FRAME_HEADER_SIZE + trailerLen)
+        .toString('utf-8');
       expect(trailerStr).toContain(`grpc-status: ${GrpcStatus.INVALID_ARGUMENT}`);
       expect(trailerStr).toContain('Invalid%20gRPC%20path');
     });
@@ -262,7 +266,12 @@ describe('GrpcWebHandler', () => {
     });
 
     it('should increment requestsRejected for rate limited', async () => {
-      mockRateLimiter.consume.mockResolvedValue({ allowed: false, remaining: 0, resetMs: 0, limit: 10 });
+      mockRateLimiter.consume.mockResolvedValue({
+        allowed: false,
+        remaining: 0,
+        resetMs: 0,
+        limit: 10,
+      });
       const req = createMockReq();
       const res = createMockRes();
 
@@ -349,7 +358,10 @@ describe('GrpcWebHandler', () => {
 
       expect(res.setHeader).toHaveBeenCalledWith('Content-Type', 'application/grpc-web');
       expect(res.setHeader).toHaveBeenCalledWith('Access-Control-Allow-Origin', '*');
-      expect(res.setHeader).toHaveBeenCalledWith('Access-Control-Expose-Headers', 'grpc-status,grpc-message');
+      expect(res.setHeader).toHaveBeenCalledWith(
+        'Access-Control-Expose-Headers',
+        'grpc-status,grpc-message',
+      );
       expect(res.end).toHaveBeenCalled();
 
       // Verify the response includes data + trailer frame
@@ -816,9 +828,15 @@ describe('GrpcWebHandler', () => {
       const res1 = createMockRes();
 
       const p1 = handler.handleRequest(req1, res1);
-      process.nextTick(() => { req1.emit('data', Buffer.alloc(0)); req1.emit('end'); });
+      process.nextTick(() => {
+        req1.emit('data', Buffer.alloc(0));
+        req1.emit('end');
+      });
       await vi.waitFor(() => expect((mockSession as any).request).toHaveBeenCalledTimes(1));
-      process.nextTick(() => { mockStream1.emit('response', {}); mockStream1.emit('end'); });
+      process.nextTick(() => {
+        mockStream1.emit('response', {});
+        mockStream1.emit('end');
+      });
       await p1;
 
       // Second request to same host
@@ -826,9 +844,15 @@ describe('GrpcWebHandler', () => {
       const res2 = createMockRes();
 
       const p2 = handler.handleRequest(req2, res2);
-      process.nextTick(() => { req2.emit('data', Buffer.alloc(0)); req2.emit('end'); });
+      process.nextTick(() => {
+        req2.emit('data', Buffer.alloc(0));
+        req2.emit('end');
+      });
       await vi.waitFor(() => expect((mockSession as any).request).toHaveBeenCalledTimes(2));
-      process.nextTick(() => { mockStream2.emit('response', {}); mockStream2.emit('end'); });
+      process.nextTick(() => {
+        mockStream2.emit('response', {});
+        mockStream2.emit('end');
+      });
       await p2;
 
       // http2.connect should only have been called once
@@ -1075,7 +1099,10 @@ describe('GrpcWebHandler', () => {
     });
 
     it('should URL-encode the message in trailer frame', async () => {
-      mockAllowlistMatcher.match.mockReturnValue({ allowed: false, reason: 'error with spaces & symbols' });
+      mockAllowlistMatcher.match.mockReturnValue({
+        allowed: false,
+        reason: 'error with spaces & symbols',
+      });
       const req = createMockReq();
       const res = createMockRes();
 

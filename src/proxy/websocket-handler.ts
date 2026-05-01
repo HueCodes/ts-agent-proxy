@@ -151,10 +151,7 @@ export class WebSocketHandler {
       await this.proxyWebSocket(req, socket, head, targetUrl, requestInfo, matchResult);
     } catch (error) {
       this.config.logger.error({ error, host: requestInfo.host }, 'WebSocket proxy error');
-      this.config.auditLogger.logError(
-        requestInfo,
-        error instanceof Error ? error : String(error),
-      );
+      this.config.auditLogger.logError(requestInfo, error instanceof Error ? error : String(error));
       this.rejectUpgrade(socket, 502, 'Bad Gateway: Could not connect to upstream');
     }
   }

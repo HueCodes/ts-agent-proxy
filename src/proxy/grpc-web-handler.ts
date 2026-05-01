@@ -236,10 +236,7 @@ export class GrpcWebHandler {
         { error, host: hostname, service: grpcPath.fullService },
         'gRPC-Web proxy error',
       );
-      this.config.auditLogger.logError(
-        requestInfo,
-        error instanceof Error ? error : String(error),
-      );
+      this.config.auditLogger.logError(requestInfo, error instanceof Error ? error : String(error));
 
       if (!res.headersSent) {
         this.sendGrpcWebError(res, GrpcStatus.UNAVAILABLE, 'Upstream connection failed', isText);

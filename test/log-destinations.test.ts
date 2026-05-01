@@ -281,7 +281,9 @@ describe('WebhookDestination', () => {
     receivedRequests = [];
     server = http.createServer((req, res) => {
       let body = '';
-      req.on('data', (chunk) => { body += chunk; });
+      req.on('data', (chunk) => {
+        body += chunk;
+      });
       req.on('end', () => {
         receivedRequests.push({
           method: req.method || '',
@@ -495,12 +497,16 @@ describe('WebhookDestination', () => {
 
   it('should retry on non-2xx status code', async () => {
     // Close the good server and create one that returns errors then succeeds
-    await new Promise<void>((resolve) => { server.close(() => resolve()); });
+    await new Promise<void>((resolve) => {
+      server.close(() => resolve());
+    });
 
     let requestCount = 0;
     server = http.createServer((req, res) => {
       let body = '';
-      req.on('data', (chunk) => { body += chunk; });
+      req.on('data', (chunk) => {
+        body += chunk;
+      });
       req.on('end', () => {
         requestCount++;
         if (requestCount <= 2) {
@@ -532,11 +538,15 @@ describe('WebhookDestination', () => {
   });
 
   it('should log error after all retries exhausted on bad status', async () => {
-    await new Promise<void>((resolve) => { server.close(() => resolve()); });
+    await new Promise<void>((resolve) => {
+      server.close(() => resolve());
+    });
 
     server = http.createServer((req, res) => {
       let body = '';
-      req.on('data', (chunk) => { body += chunk; });
+      req.on('data', (chunk) => {
+        body += chunk;
+      });
       req.on('end', () => {
         res.writeHead(500);
         res.end();
@@ -565,7 +575,9 @@ describe('WebhookDestination', () => {
 
   it('should retry on connection error', async () => {
     // Use a port that nothing is listening on
-    await new Promise<void>((resolve) => { server.close(() => resolve()); });
+    await new Promise<void>((resolve) => {
+      server.close(() => resolve());
+    });
 
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 

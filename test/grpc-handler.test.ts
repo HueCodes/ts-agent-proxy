@@ -203,10 +203,7 @@ describe('GrpcHandler', () => {
         [HTTP2_HEADER_PATH]: '/invalid-no-slash',
       });
 
-      await handler.handleStream(
-        mockStream as unknown as http2.ServerHttp2Stream,
-        headers,
-      );
+      await handler.handleStream(mockStream as unknown as http2.ServerHttp2Stream, headers);
 
       expect(mockStream.respond).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -225,10 +222,7 @@ describe('GrpcHandler', () => {
 
       const headers = makeGrpcHeaders();
 
-      await handler.handleStream(
-        mockStream as unknown as http2.ServerHttp2Stream,
-        headers,
-      );
+      await handler.handleStream(mockStream as unknown as http2.ServerHttp2Stream, headers);
 
       expect(mockStream.respond).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -248,10 +242,7 @@ describe('GrpcHandler', () => {
 
       const headers = makeGrpcHeaders();
 
-      await handler.handleStream(
-        mockStream as unknown as http2.ServerHttp2Stream,
-        headers,
-      );
+      await handler.handleStream(mockStream as unknown as http2.ServerHttp2Stream, headers);
 
       const stats = handler.getStats();
       expect(stats.requestsRejected).toBe(1);
@@ -275,10 +266,7 @@ describe('GrpcHandler', () => {
         [HTTP2_HEADER_PATH]: '/myapp.UserService/GetUser',
       });
 
-      await handler.handleStream(
-        mockStream as unknown as http2.ServerHttp2Stream,
-        headers,
-      );
+      await handler.handleStream(mockStream as unknown as http2.ServerHttp2Stream, headers);
 
       expect(mockStream.respond).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -297,10 +285,7 @@ describe('GrpcHandler', () => {
 
       const headers = makeGrpcHeaders();
 
-      await handler.handleStream(
-        mockStream as unknown as http2.ServerHttp2Stream,
-        headers,
-      );
+      await handler.handleStream(mockStream as unknown as http2.ServerHttp2Stream, headers);
 
       expect(mockStream.respond).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -519,10 +504,7 @@ describe('GrpcHandler', () => {
       await handlePromise;
 
       // Should connect with default port (443)
-      expect(http2.connect).toHaveBeenCalledWith(
-        'https://api.example.com:443',
-        expect.any(Object),
-      );
+      expect(http2.connect).toHaveBeenCalledWith('https://api.example.com:443', expect.any(Object));
     });
 
     it('should track gRPC error status from trailers', async () => {
@@ -617,10 +599,7 @@ describe('GrpcHandler', () => {
 
       const headers = makeGrpcHeaders();
 
-      await handler.handleStream(
-        mockStream as unknown as http2.ServerHttp2Stream,
-        headers,
-      );
+      await handler.handleStream(mockStream as unknown as http2.ServerHttp2Stream, headers);
 
       // The allowlist match should have been called with requestInfo containing the IP
       expect(mocks.mockAllowlistMatcher.match).toHaveBeenCalledWith(
@@ -640,10 +619,7 @@ describe('GrpcHandler', () => {
 
       const headers = makeGrpcHeaders();
 
-      await handler.handleStream(
-        mockStream as unknown as http2.ServerHttp2Stream,
-        headers,
-      );
+      await handler.handleStream(mockStream as unknown as http2.ServerHttp2Stream, headers);
 
       expect(mocks.mockAllowlistMatcher.match).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -657,10 +633,7 @@ describe('GrpcHandler', () => {
         [HTTP2_HEADER_PATH]: '/invalid',
       });
 
-      await handler.handleStream(
-        mockStream as unknown as http2.ServerHttp2Stream,
-        headers,
-      );
+      await handler.handleStream(mockStream as unknown as http2.ServerHttp2Stream, headers);
 
       const stats = handler.getStats();
       expect(stats.totalRequests).toBe(1);
@@ -671,10 +644,7 @@ describe('GrpcHandler', () => {
         [HTTP2_HEADER_PATH]: '/invalid',
       });
 
-      await handler.handleStream(
-        mockStream as unknown as http2.ServerHttp2Stream,
-        headers,
-      );
+      await handler.handleStream(mockStream as unknown as http2.ServerHttp2Stream, headers);
 
       const stats = handler.getStats();
       expect(stats.activeStreams).toBe(0);
@@ -692,10 +662,7 @@ describe('GrpcHandler', () => {
       const headers = makeGrpcHeaders();
 
       // First request
-      const p1 = handler.handleStream(
-        mockStream as unknown as http2.ServerHttp2Stream,
-        headers,
-      );
+      const p1 = handler.handleStream(mockStream as unknown as http2.ServerHttp2Stream, headers);
       await flushMicrotasks();
       mockUpstreamStream1.emit('response', { [HTTP2_HEADER_STATUS]: 200 });
       mockUpstreamStream1.emit('end');
@@ -703,10 +670,7 @@ describe('GrpcHandler', () => {
 
       // Second request
       const mockStream2 = new MockStream();
-      const p2 = handler.handleStream(
-        mockStream2 as unknown as http2.ServerHttp2Stream,
-        headers,
-      );
+      const p2 = handler.handleStream(mockStream2 as unknown as http2.ServerHttp2Stream, headers);
       await flushMicrotasks();
       mockUpstreamStream2.emit('response', { [HTTP2_HEADER_STATUS]: 200 });
       mockUpstreamStream2.emit('end');
@@ -744,10 +708,7 @@ describe('GrpcHandler', () => {
       const mockStream = new MockStream();
       const headers = makeGrpcHeaders({ [HTTP2_HEADER_PATH]: '/bad' });
 
-      await handler.handleStream(
-        mockStream as unknown as http2.ServerHttp2Stream,
-        headers,
-      );
+      await handler.handleStream(mockStream as unknown as http2.ServerHttp2Stream, headers);
 
       // Confirm stats are non-zero
       let stats = handler.getStats();
@@ -770,10 +731,7 @@ describe('GrpcHandler', () => {
       const mockStream = new MockStream();
       const headers = makeGrpcHeaders({ [HTTP2_HEADER_PATH]: '/bad' });
 
-      await handler.handleStream(
-        mockStream as unknown as http2.ServerHttp2Stream,
-        headers,
-      );
+      await handler.handleStream(mockStream as unknown as http2.ServerHttp2Stream, headers);
 
       const stats = handler.getStats();
       expect(stats.errorsByStatus.get(GrpcStatus.INVALID_ARGUMENT)).toBe(1);
@@ -908,9 +866,7 @@ describe('GrpcHandler', () => {
     });
 
     it('should also check the HTTP2 content-type constant key', () => {
-      expect(
-        isGrpcRequest({ [HTTP2_HEADER_CONTENT_TYPE]: 'application/grpc' }),
-      ).toBe(true);
+      expect(isGrpcRequest({ [HTTP2_HEADER_CONTENT_TYPE]: 'application/grpc' })).toBe(true);
     });
   });
 });

@@ -6,13 +6,7 @@
  * @module admin/prometheus-metrics
  */
 
-import {
-  Registry,
-  Counter,
-  Gauge,
-  Histogram,
-  collectDefaultMetrics,
-} from 'prom-client';
+import { Registry, Counter, Gauge, Histogram, collectDefaultMetrics } from 'prom-client';
 
 /**
  * Prometheus metrics configuration.

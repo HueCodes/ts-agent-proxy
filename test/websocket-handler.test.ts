@@ -390,7 +390,9 @@ function createMockSocket(): EventEmitter & {
 
 function createMocks() {
   const mockAllowlistMatcher = {
-    match: vi.fn().mockReturnValue({ allowed: true, reason: 'Matched', matchedRule: { id: 'rule1' } }),
+    match: vi
+      .fn()
+      .mockReturnValue({ allowed: true, reason: 'Matched', matchedRule: { id: 'rule1' } }),
     reload: vi.fn(),
     getConfig: vi.fn(),
   } as unknown as AllowlistMatcher;
@@ -418,12 +420,14 @@ function createMocks() {
   return { mockAllowlistMatcher, mockRateLimiter, mockAuditLogger, mockLogger };
 }
 
-function makeUpgradeReq(overrides: Partial<{
-  url: string;
-  host: string;
-  headers: Record<string, string | string[]>;
-  encrypted: boolean;
-}> = {}) {
+function makeUpgradeReq(
+  overrides: Partial<{
+    url: string;
+    host: string;
+    headers: Record<string, string | string[]>;
+    encrypted: boolean;
+  }> = {},
+) {
   return {
     url: overrides.url ?? '/ws',
     headers: {
@@ -477,7 +481,8 @@ describe('WebSocketHandler proxyWebSocket', () => {
     });
 
     mockUpstreamSocket.emit('connect');
-    const upgradeResponse = 'HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\n';
+    const upgradeResponse =
+      'HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\n';
     mockUpstreamSocket.emit('data', Buffer.from(upgradeResponse));
 
     await upgradePromise;
@@ -488,9 +493,7 @@ describe('WebSocketHandler proxyWebSocket', () => {
         port: 8080,
       }),
     );
-    expect(clientSocket.write).toHaveBeenCalledWith(
-      Buffer.from(upgradeResponse),
-    );
+    expect(clientSocket.write).toHaveBeenCalledWith(Buffer.from(upgradeResponse));
   });
 
   it('should connect via tls.connect for wss:// URLs', async () => {
@@ -1044,9 +1047,7 @@ describe('WebSocketHandler parseTargetUrl edge cases', () => {
       expect(mockUpstreamSocket.listenerCount('connect')).toBeGreaterThan(0);
     });
 
-    expect(net.connect).toHaveBeenCalledWith(
-      expect.objectContaining({ port: 80 }),
-    );
+    expect(net.connect).toHaveBeenCalledWith(expect.objectContaining({ port: 80 }));
 
     mockUpstreamSocket.emit('connect');
     mockUpstreamSocket.emit('data', Buffer.from('HTTP/1.1 101 Switching Protocols\r\n\r\n'));
@@ -1063,9 +1064,7 @@ describe('WebSocketHandler parseTargetUrl edge cases', () => {
       expect(mockUpstreamSocket.listenerCount('connect')).toBeGreaterThan(0);
     });
 
-    expect(tls.connect).toHaveBeenCalledWith(
-      expect.objectContaining({ port: 443 }),
-    );
+    expect(tls.connect).toHaveBeenCalledWith(expect.objectContaining({ port: 443 }));
 
     mockUpstreamSocket.emit('connect');
     mockUpstreamSocket.emit('data', Buffer.from('HTTP/1.1 101 Switching Protocols\r\n\r\n'));
@@ -1074,7 +1073,10 @@ describe('WebSocketHandler parseTargetUrl edge cases', () => {
 
   it('should handle missing req.url gracefully (defaults to /)', async () => {
     // allowlist blocks to avoid needing upstream socket setup
-    (mocks.mockAllowlistMatcher.match as ReturnType<typeof vi.fn>).mockReturnValue({ allowed: false, reason: 'Blocked' });
+    (mocks.mockAllowlistMatcher.match as ReturnType<typeof vi.fn>).mockReturnValue({
+      allowed: false,
+      reason: 'Blocked',
+    });
 
     const clientSocket = createMockSocket();
     const req = {
