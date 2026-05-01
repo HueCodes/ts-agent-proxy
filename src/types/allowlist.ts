@@ -159,6 +159,12 @@ export interface RequestInfo {
   host: string;
   /** Target port */
   port: number;
+  /**
+   * URL scheme of the upstream connection, when known: 'http' for plaintext
+   * forward-proxy traffic, 'https' for MITM-decrypted traffic. CONNECT-mode
+   * tunnels leave it undefined (the proxy never sees the scheme).
+   */
+  scheme?: 'http' | 'https' | undefined;
   /** Request path (for MITM mode) */
   path?: string | undefined;
   /** HTTP method (for MITM mode) */

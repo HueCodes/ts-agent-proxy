@@ -33,8 +33,9 @@ export const SAFE_DEFAULT_IP_RANGES: readonly string[] = [
   'fe80::/10',
   // Unique local IPv6
   'fc00::/7',
-  // Unspecified
-  '0.0.0.0/32',
+  // "This network" reserved range (covers 0.0.0.0 itself and the never-route
+  // /8 reserved for source-only addressing).
+  '0.0.0.0/8',
   '::/128',
 ];
 

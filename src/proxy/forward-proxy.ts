@@ -136,6 +136,7 @@ export class ForwardProxy {
     const requestInfo: RequestInfo = {
       host: url.hostname,
       port: url.port ? parseInt(url.port, 10) : url.protocol === 'https:' ? 443 : 80,
+      scheme: url.protocol === 'https:' ? 'https' : 'http',
       path: url.pathname + url.search,
       method: req.method,
       sourceIp: this.getClientIp(req),

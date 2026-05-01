@@ -8,6 +8,7 @@
  */
 
 import http from 'node:http';
+import https from 'node:https';
 import type { IncomingMessage } from 'node:http';
 import { readPidfile, isProcessAlive } from './pidfile.js';
 import type { AuditLogEntry } from '../logging/audit-logger.js';
@@ -99,9 +100,14 @@ export async function tail(opts: TailOptions): Promise<void> {
     stdout.write(formatHeader() + '\n');
   }
 
+  // Pick the right transport based on the URL scheme. Defaults to http
+  // because the run subcommand binds the admin server on plain HTTP locally,
+  // but operators pointing tail at a remote admin URL behind TLS need https.
+  const transport = url.protocol === 'https:' ? https : http;
+
   await new Promise<void>((resolve, reject) => {
     let count = 0;
-    const req = http.get(
+    const req = transport.get(
       {
         host: url.hostname,
         port: url.port,
@@ -114,30 +120,44 @@ export async function tail(opts: TailOptions): Promise<void> {
           return;
         }
 
+        // SSE framing: events are separated by a blank line; within an
+        // event, multiple `data:` lines are concatenated with '\n' before
+        // parsing. Earlier code parsed each `data:` line as standalone
+        // JSON, which silently dropped any payload that contained a newline
+        // (stack traces, multi-line denial reasons).
         let buffer = '';
         res.setEncoding('utf-8');
         res.on('data', (chunk: string) => {
-          buffer += chunk;
+          // Normalize CRLF so spec-compliant servers using \r\n\r\n event
+          // delimiters parse the same way as \n\n ones.
+          buffer += chunk.replace(/\r\n/g, '\n');
           const events = buffer.split('\n\n');
           buffer = events.pop() ?? '';
           for (const evt of events) {
+            const dataLines: string[] = [];
             for (const line of evt.split('\n')) {
-              if (!line.startsWith('data: ')) continue;
-              const json = line.slice(6).trim();
-              if (!json) continue;
-              try {
-                const entry = JSON.parse(json) as AuditLogEntry;
-                const formatted = formatEntry(entry, opts);
-                if (formatted !== null) stdout.write(formatted + '\n');
-                count++;
-                if (opts.maxEvents !== undefined && count >= opts.maxEvents) {
-                  res.destroy();
-                  resolve();
-                  return;
-                }
-              } catch {
-                // Drop malformed payloads silently — keeps the stream alive.
+              // SSE allows `data:foo` and `data: foo`; both strip exactly
+              // one leading space if present.
+              if (line.startsWith('data:')) {
+                const value = line.slice(5).startsWith(' ') ? line.slice(6) : line.slice(5);
+                dataLines.push(value);
               }
+            }
+            if (dataLines.length === 0) continue;
+            const json = dataLines.join('\n').trim();
+            if (!json) continue;
+            try {
+              const entry = JSON.parse(json) as AuditLogEntry;
+              const formatted = formatEntry(entry, opts);
+              if (formatted !== null) stdout.write(formatted + '\n');
+              count++;
+              if (opts.maxEvents !== undefined && count >= opts.maxEvents) {
+                res.destroy();
+                resolve();
+                return;
+              }
+            } catch {
+              // Drop malformed payloads silently — keeps the stream alive.
             }
           }
         });

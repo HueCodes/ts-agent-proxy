@@ -61,6 +61,76 @@ describe('detectSecrets', () => {
     expect(detections.some((d) => d.pattern === 'anthropic-key')).toBe(true);
   });
 
+  it('catches Stripe live keys', () => {
+    const body = `STRIPE_KEY=sk_live_${'a'.repeat(40)}`;
+    const detections = detectSecrets(body);
+    expect(detections.some((d) => d.pattern === 'stripe-live-key')).toBe(true);
+  });
+
+  it('catches npm tokens', () => {
+    const detections = detectSecrets(`//registry.npmjs.org/:_authToken=npm_${'a'.repeat(36)}`);
+    expect(detections.some((d) => d.pattern === 'npm-token')).toBe(true);
+  });
+
+  it('catches Hugging Face tokens', () => {
+    const detections = detectSecrets(`HF_TOKEN=hf_${'A'.repeat(40)}`);
+    expect(detections.some((d) => d.pattern === 'huggingface-token')).toBe(true);
+  });
+
+  it('catches Vercel tokens', () => {
+    const detections = detectSecrets(`vercel_${'a'.repeat(28)}`);
+    expect(detections.some((d) => d.pattern === 'vercel-token')).toBe(true);
+  });
+
+  it('catches OpenAI service-account keys (sk-svcacct-)', () => {
+    const detections = detectSecrets(`OPENAI_KEY=sk-svcacct-${'A'.repeat(48)}`);
+    expect(detections.some((d) => d.pattern === 'openai-key')).toBe(true);
+  });
+
+  it('catches a JWT only with explicit auth/bearer context', () => {
+    const jwt = `eyJ${'A'.repeat(20)}.eyJ${'B'.repeat(20)}.${'C'.repeat(20)}`;
+    // Plain occurrence — not flagged.
+    expect(detectSecrets(`token: ${jwt}`).some((d) => d.pattern === 'jwt')).toBe(false);
+    // With Authorization context — flagged.
+    expect(
+      detectSecrets(null, { authorization: `Bearer ${jwt}` }).some((d) => d.pattern === 'jwt'),
+    ).toBe(true);
+  });
+
+  it('does not flag a 40-char base64 blob just because the word "aws" is nearby', () => {
+    // Reproduces the medium-severity false positive: a 40-char base64-ish
+    // string with the bare keyword "aws" anywhere in a 128-byte window
+    // used to be flagged as aws-secret-key.
+    const body = `region: aws-us-east-1, etag: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMN"`;
+    expect(detectSecrets(body).some((d) => d.pattern === 'aws-secret-key')).toBe(false);
+  });
+
+  it('still catches AWS secret keys when paired with AKIA in the window', () => {
+    const body = `AKIAIOSFODNN7EXAMPLE\nAWS_SECRET_ACCESS_KEY=wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY`;
+    expect(detectSecrets(body).some((d) => d.pattern === 'aws-secret-key')).toBe(true);
+  });
+
+  it('does not flag a sha-40 inside ?token=… now that the weak context is gone', () => {
+    const sha = '1234567890abcdef1234567890abcdef12345678';
+    const body = `https://example.com/page?token=session_id&commit=${sha}`;
+    expect(detectSecrets(body).some((d) => d.pattern === 'github-classic-token')).toBe(false);
+  });
+
+  it('survives a custom pattern supplied without /g (no infinite loop)', () => {
+    // A regex without /g would cause `regex.exec(...)` in a loop to match
+    // the same offset forever. detectSecrets clones the regex with /g
+    // forced on, so the call returns rather than hangs.
+    const start = Date.now();
+    detectSecrets(
+      'hello world hello world',
+      {},
+      {
+        patterns: [{ name: 'no-g', regex: /hello/ }],
+      },
+    );
+    expect(Date.now() - start).toBeLessThan(500);
+  });
+
   it('finishes a 64KB scan in well under 10ms', () => {
     const body = `${'.'.repeat(64 * 1024 - 80)}sk-ant-api03-${'D'.repeat(80)}`;
     const start = performance.now();

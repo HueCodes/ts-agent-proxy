@@ -113,6 +113,11 @@ export function generateCa(paths: CaPaths = caPaths()): void {
 
 function atomicWriteFile(target: string, contents: string, mode: number): void {
   const tmp = `${target}.tmp.${process.pid}`;
+  // The `mode` arg sets POSIX permissions; on Windows, Node largely ignores
+  // it and the inherited NTFS ACL applies. The cache lives under the
+  // per-user %LOCALAPPDATA%, so exposure is limited to processes running
+  // as the same user — but operators on shared workstations should be aware
+  // that the key file is not 0o600 there.
   fs.writeFileSync(tmp, contents, { mode });
   fs.renameSync(tmp, target);
 }

@@ -13,6 +13,8 @@ import { applySafeDefaults } from '../src/profiles/safe-defaults.js';
 import { parseJsonRpc, evaluateMcpRequest, type McpPolicy } from '../src/filter/mcp-matcher.js';
 import { caPaths, ensureCa } from '../src/cli/ca-cache.js';
 import { writePidfile, checkForLiveRun, removePidfile } from '../src/cli/pidfile.js';
+import { AuditLogger, type AuditLogEntry } from '../src/logging/audit-logger.js';
+import type { LogDestination } from '../src/logging/log-destinations.js';
 
 describe('HIGH #1 — IPv6-mapped IPv4 IMDS bypass', () => {
   const config = applySafeDefaults({
@@ -191,5 +193,72 @@ describe('HIGH #4 — run lifecycle hardening', () => {
       removePidfile(file);
       removePidfile(file);
     }).not.toThrow();
+  });
+});
+
+describe('MED — audit log path scrubbing', () => {
+  function captureEntry(): {
+    logger: AuditLogger;
+    entries: AuditLogEntry[];
+  } {
+    const entries: AuditLogEntry[] = [];
+    const dest: LogDestination = {
+      name: 'capture',
+      write(line: string): void {
+        entries.push(JSON.parse(line) as AuditLogEntry);
+      },
+      async close(): Promise<void> {},
+    };
+    const logger = new AuditLogger({
+      destinations: [dest],
+      logToMain: false,
+      scrubSecrets: true,
+    });
+    return { logger, entries };
+  }
+
+  it('redacts an OpenAI key embedded in the request path query string', () => {
+    const { logger, entries } = captureEntry();
+    logger.logRequest(
+      {
+        host: 'api.openai.com',
+        path: '/v1/chat?api_key=sk-proj-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
+        method: 'POST',
+        port: 443,
+      },
+      { allowed: true },
+    );
+    expect(entries.length).toBe(1);
+    const path = entries[0]!.request.path!;
+    expect(path).not.toContain('sk-proj-AAAA');
+    expect(path).toContain('[REDACTED');
+  });
+
+  it('redacts secrets in the path of a denied request as well', () => {
+    const { logger, entries } = captureEntry();
+    logger.logError(
+      {
+        host: 'evil.example.com',
+        path: '/cb?token=ghp_abcdefghijklmnopqrstuvwxyz0123456789',
+        method: 'GET',
+        port: 443,
+      },
+      'blocked',
+    );
+    expect(entries[0]!.request.path).not.toContain('ghp_abcdef');
+  });
+
+  it("does not mutate the caller's request object", () => {
+    const { logger } = captureEntry();
+    const req = {
+      host: 'api.openai.com',
+      path: '/v1?api_key=sk-proj-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
+      method: 'POST',
+      port: 443,
+    };
+    const before = req.path;
+    logger.logRequest(req, { allowed: true });
+    // Caller still sees the original path; only the audit entry is redacted.
+    expect(req.path).toBe(before);
   });
 });

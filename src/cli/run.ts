@@ -99,8 +99,15 @@ function buildConfig(
   }
   config.allowlist = mergeProfile(config.allowlist, profile);
 
-  // --allow-domain entries
+  // --allow-domain entries. Validate to keep accidental shell-quoting
+  // mistakes (`--allow-domain=..` or empty values) from quietly broadening
+  // the allowlist.
   for (const domain of opts.allowDomains ?? []) {
+    if (!isPlausibleDomainPattern(domain)) {
+      throw new Error(
+        `--allow-domain="${domain}" doesn't look like a hostname or wildcard pattern.`,
+      );
+    }
     config.allowlist.rules.push({ id: `cli-allow-${config.allowlist.rules.length}`, domain });
   }
 
@@ -112,6 +119,21 @@ function buildConfig(
   });
 
   return config;
+}
+
+/**
+ * Surface-level sanity check for hostname patterns supplied on the CLI.
+ * Allows exact hostnames, *.domain and **.domain wildcards, and bare IPv4
+ * literals. Rejects empty, `..`, scheme-prefixed values, paths, and
+ * obviously malformed input.
+ */
+export function isPlausibleDomainPattern(value: string): boolean {
+  if (!value || value.length > 253) return false;
+  if (value.includes('/') || value.includes(' ') || value.includes('@')) return false;
+  if (value === '..' || value.startsWith('.') || value.endsWith('.')) return false;
+  // Hostname-ish: labels separated by '.', optional leading * or **
+  // segment, alphanumeric / hyphen / underscore, IPv4 literals OK.
+  return /^(?:\*\*?\.)?[A-Za-z0-9_*-]+(?:\.[A-Za-z0-9_-]+)*$/.test(value);
 }
 
 /**
@@ -128,6 +150,12 @@ export function buildChildEnv(
     HTTPS_PROXY: proxyUrl,
     http_proxy: proxyUrl,
     https_proxy: proxyUrl,
+    // ALL_PROXY is honoured by some clients (Go's net/http, certain SOCKS
+    // libraries, the global-agent npm package). A pre-set ALL_PROXY in the
+    // parent env (e.g. a corporate SOCKS proxy) would otherwise route
+    // around the firewall — clear it so HTTPS_PROXY wins unambiguously.
+    ALL_PROXY: '',
+    all_proxy: '',
     NO_PROXY: '',
     no_proxy: '',
     // Make Node-based agents trust the proxy CA without changing the system store.

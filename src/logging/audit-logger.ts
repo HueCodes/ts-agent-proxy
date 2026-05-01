@@ -396,6 +396,15 @@ export class AuditLogger {
       return;
     }
 
+    // Scrub secrets out of the request path before logging. Tokens routinely
+    // appear in query strings (e.g. `?api_key=...`, `?access_token=...`) and
+    // would otherwise land verbatim in the audit log even when header
+    // redaction is fully wired up.
+    const scrubbedRequest =
+      this.options.scrubSecrets && request.path
+        ? { ...request, path: this.scrubSecretsInString(request.path, options?.headers) }
+        : request;
+
     const entry: AuditLogEntry = {
       requestId: options?.requestId ?? randomUUID(),
       traceId: options?.traceId,
@@ -403,7 +412,7 @@ export class AuditLogger {
       timestamp: new Date().toISOString(),
       eventType: 'request',
       decision: matchResult.allowed ? 'allowed' : 'denied',
-      request,
+      request: scrubbedRequest,
       response: options?.response,
       matchResult,
       durationMs: options?.durationMs,
@@ -523,12 +532,17 @@ export class AuditLogger {
     rule?: AllowlistRule,
     requestId?: string,
   ): void {
+    const scrubbedRequest =
+      this.options.scrubSecrets && request.path
+        ? { ...request, path: this.scrubSecretsInString(request.path) }
+        : request;
+
     const entry: AuditLogEntry = {
       requestId: requestId ?? randomUUID(),
       timestamp: new Date().toISOString(),
       eventType: 'rate_limit',
       decision: rateLimitResult.allowed ? 'allowed' : 'rate_limited',
-      request,
+      request: scrubbedRequest,
       rateLimitResult,
       matchResult: rule
         ? { allowed: true, matchedRule: rule, reason: `Rate limited by rule: ${rule.id}` }
@@ -546,12 +560,17 @@ export class AuditLogger {
    * @param requestId - Optional request ID for correlation
    */
   logError(request: RequestInfo, error: Error | string, requestId?: string): void {
+    const scrubbedRequest =
+      this.options.scrubSecrets && request.path
+        ? { ...request, path: this.scrubSecretsInString(request.path) }
+        : request;
+
     const entry: AuditLogEntry = {
       requestId: requestId ?? randomUUID(),
       timestamp: new Date().toISOString(),
       eventType: 'error',
       decision: 'denied',
-      request,
+      request: scrubbedRequest,
       errorMessage: typeof error === 'string' ? error : error.message,
     };
 
@@ -600,6 +619,13 @@ export class AuditLogger {
   /**
    * Subscribe to live audit entries. Returns an unsubscribe function. Used by
    * the admin SSE stream and any embedding code that wants real-time events.
+   *
+   * The callback MUST be synchronous. Returned promises are not awaited and
+   * an exception thrown synchronously is caught and logged; a rejected
+   * promise becomes an `unhandledRejection` because the dispatch loop in
+   * `writeEntry` does not have a Promise context. If you need async work,
+   * queue from inside the callback (e.g. via `setImmediate` or by pushing
+   * into a buffer your async worker drains).
    */
   subscribe(callback: (entry: AuditLogEntry) => void): () => void {
     this.subscribers.add(callback);

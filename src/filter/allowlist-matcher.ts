@@ -178,29 +178,24 @@ export class AllowlistMatcher {
   }
 
   /**
-   * Check if a request matches the allowlist rules.
+   * Decide whether a request is allowed.
    *
-   * Evaluates all enabled rules in order. Returns as soon as a matching rule is found.
-   * If no rule matches, returns the default action from configuration.
+   * Evaluation order (the first match wins; precedence is load-bearing):
+   *   1. **User-explicit `block`** — always denies, even if an allow rule
+   *      would otherwise match.
+   *   2. **Allow rules** — first matching rule allows. Overrides
+   *      safe-default-blocked domains (e.g. you can opt back into talking
+   *      to metadata.google.internal by adding it to your rules).
+   *   3. **Safe defaults** — IMDS / RFC1918 / loopback / link-local IPs and
+   *      cloud metadata DNS names. Blocks plain HTTP egress unless the
+   *      destination is in the allow list. Disabled with
+   *      --unsafe-disable-defaults.
+   *   4. **Default action** — falls through to `defaultAction` from config
+   *      (typically `deny` in strict mode).
    *
-   * @param request - The request information to match against rules
-   * @returns Match result indicating whether the request is allowed and which rule matched
-   *
-   * @example
-   * ```typescript
-   * const result = matcher.match({
-   *   host: 'api.github.com',
-   *   port: 443,
-   *   path: '/repos/owner/repo',
-   *   method: 'GET'
-   * });
-   *
-   * if (result.allowed) {
-   *   console.log(`Allowed by rule: ${result.matchedRule?.id}`);
-   * } else {
-   *   console.log(`Denied: ${result.reason}`);
-   * }
-   * ```
+   * The host is normalized once at the top so all four steps see a
+   * canonical form (no IPv6 brackets, no trailing dot, IPv4-mapped IPv6
+   * collapsed to plain IPv4).
    */
   match(request: RequestInfo): MatchResult {
     // Normalize host once so every layer below sees the same canonical form
@@ -230,6 +225,12 @@ export class AllowlistMatcher {
       }
     }
 
+    // Trie fallback: rules with non-standard wildcard placement (e.g.
+    // `api*.example.com` — wildcard in the middle) are stored in
+    // exactDomainIndex by raw string and never match via the trie's
+    // segment walk. The full `matchesRule` path uses DomainMatcher's
+    // regex compilation, which does match them. Skipping rules already
+    // checked via the trie keeps this O(unmatched-rules) per request.
     const enabledRules = this.config.rules.filter((r) => r.enabled !== false);
     for (const rule of enabledRules) {
       if (candidateRules.includes(rule)) continue;
@@ -296,8 +297,16 @@ export class AllowlistMatcher {
         return `safe-default: blocked private/loopback/link-local IP ${request.host}`;
       }
     }
-    if (safe.httpsOnly && request.port === 80) {
-      return `safe-default: plain HTTP egress to ${request.host}:80 requires explicit allow`;
+    // Plain HTTP egress check. Prefer the explicit scheme when callers know
+    // it (forward-proxy / MITM-decrypted); fall back to the port-80
+    // heuristic for CONNECT-mode tunnels where the scheme is invisible.
+    if (safe.httpsOnly) {
+      if (request.scheme === 'http') {
+        return `safe-default: plain HTTP egress to ${request.host} requires explicit allow`;
+      }
+      if (!request.scheme && request.port === 80) {
+        return `safe-default: CONNECT to ${request.host}:80 requires explicit allow (plain HTTP)`;
+      }
     }
     return null;
   }

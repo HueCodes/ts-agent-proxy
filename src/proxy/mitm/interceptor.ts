@@ -175,6 +175,10 @@ export class MitmInterceptor {
       const requestInfo: RequestInfo = {
         host: targetHost,
         port: targetPort,
+        // MITM only sees a request after the TLS handshake completes, so the
+        // upstream is HTTPS by definition. Set this so the safe-default
+        // httpsOnly check correctly recognizes the request as encrypted.
+        scheme: 'https',
         path: request.path,
         method: request.method,
         headers: request.headers,

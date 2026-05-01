@@ -290,7 +290,20 @@ export class AdminServer {
 
     const blocksOnly = url.searchParams.get('include') === 'blocks-only';
     const sinceParam = url.searchParams.get('since');
-    const sinceMs = sinceParam ? parseDurationMs(sinceParam) : undefined;
+    let sinceMs: number | undefined;
+    if (sinceParam !== null) {
+      sinceMs = parseDurationMs(sinceParam);
+      if (sinceMs === undefined) {
+        res.writeHead(400);
+        res.end(
+          JSON.stringify({
+            error: 'invalid `since` duration',
+            hint: 'use a value like 30s, 5m, 2h',
+          }),
+        );
+        return;
+      }
+    }
 
     res.writeHead(200, {
       'Content-Type': 'text/event-stream',
@@ -300,9 +313,35 @@ export class AdminServer {
     });
     res.write('retry: 2000\n\n');
 
+    // Backpressure handling. A slow client that doesn't drain the socket
+    // would otherwise let Node's internal write buffer grow without bound
+    // (one entry per audit event, each up to maxBodyLogSize bytes). When
+    // the high-water mark is crossed we set a flag to drop new events
+    // until 'drain' fires; if the backlog persists past a threshold we
+    // close the stream so the client can reconnect cleanly.
+    let paused = false;
+    let droppedWhilePaused = 0;
+    const MAX_DROPS_BEFORE_CLOSE = 1000;
+    res.on('drain', () => {
+      paused = false;
+      if (droppedWhilePaused > 0) {
+        // Surface a marker event so the consumer knows it missed entries.
+        res.write(`event: dropped\ndata: ${droppedWhilePaused}\n\n`);
+        droppedWhilePaused = 0;
+      }
+    });
+
     const send = (entry: AuditLogEntry): void => {
       if (blocksOnly && entry.decision === 'allowed') return;
-      res.write(`data: ${JSON.stringify(entry)}\n\n`);
+      if (paused) {
+        droppedWhilePaused++;
+        if (droppedWhilePaused >= MAX_DROPS_BEFORE_CLOSE) {
+          close();
+        }
+        return;
+      }
+      const ok = res.write(`data: ${JSON.stringify(entry)}\n\n`);
+      if (!ok) paused = true;
     };
 
     if (sinceMs !== undefined) {
@@ -315,7 +354,7 @@ export class AdminServer {
     const unsubscribe = this.config.auditLogger.subscribe(send);
 
     const keepalive = setInterval(() => {
-      res.write(': keepalive\n\n');
+      if (!paused) res.write(': keepalive\n\n');
     }, 15_000);
 
     const close = (): void => {

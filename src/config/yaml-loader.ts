@@ -23,6 +23,21 @@ export function detectFormat(filePath: string): 'json' | 'yaml' {
 }
 
 /**
+ * Strip fields from a user-loaded config that should never come from disk.
+ *
+ * `safeDefaults` is populated by applySafeDefaults() at runtime. Allowing it
+ * to come from the user's policy file would let `safeDefaults: { enabled:
+ * false }` silently disable IMDS protection without the loud
+ * --unsafe-disable-defaults flag, which is the opposite of what we want.
+ */
+function stripInternalFields(data: unknown): unknown {
+  if (data === null || typeof data !== 'object') return data;
+  const obj = { ...(data as Record<string, unknown>) };
+  if ('safeDefaults' in obj) delete obj.safeDefaults;
+  return obj;
+}
+
+/**
  * Parse a YAML allowlist config from a string. Errors carry line/column info
  * when the parser knows them.
  */
@@ -46,7 +61,7 @@ export function parseAllowlistConfigYaml(source: string, filePath?: string): All
     );
   }
 
-  return validateAllowlistConfig(data, filePath);
+  return validateAllowlistConfig(stripInternalFields(data), filePath);
 }
 
 /**
@@ -70,6 +85,7 @@ export function loadAllowlistConfigFile(filePath: string): AllowlistConfig {
   if (detectFormat(filePath) === 'yaml') {
     return parseAllowlistConfigYaml(source, filePath);
   }
-  // JSON path: defer to the existing validator entry point.
-  return validateAllowlistConfig(JSON.parse(source) as unknown, filePath);
+  // JSON path: defer to the existing validator entry point. Strip internal
+  // fields here too so JSON users can't override safeDefaults.
+  return validateAllowlistConfig(stripInternalFields(JSON.parse(source) as unknown), filePath);
 }
