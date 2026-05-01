@@ -114,6 +114,10 @@ function makeProxyRequest(
 /**
  * Make a CONNECT request through the proxy.
  */
+// Node's http client emits 'connect' for any response to a CONNECT request
+// (even non-2xx), so success must be derived from the status code, not the
+// event type. The 'response' branch is kept as a safety net for non-standard
+// servers that might surface a normal HTTP response instead.
 function makeConnectRequest(
   target: string,
   proxyPort: number,
@@ -128,11 +132,13 @@ function makeConnectRequest(
 
     req.on('connect', (res, socket) => {
       socket.destroy();
-      resolve({ success: true, statusCode: res.statusCode ?? 0 });
+      const statusCode = res.statusCode ?? 0;
+      resolve({ success: statusCode >= 200 && statusCode < 300, statusCode });
     });
 
     req.on('response', (res) => {
-      resolve({ success: false, statusCode: res.statusCode ?? 0 });
+      const statusCode = res.statusCode ?? 0;
+      resolve({ success: statusCode >= 200 && statusCode < 300, statusCode });
     });
 
     req.on('error', () => {
