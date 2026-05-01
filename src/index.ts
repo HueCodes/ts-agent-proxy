@@ -145,6 +145,11 @@ function getVersion(): string {
 async function main(): Promise<void> {
   const argv = process.argv.slice(2);
 
+  if (argv.includes('--help') || argv[0] === 'help') {
+    printHelp(argv.includes('--advanced'));
+    return;
+  }
+
   // Subcommand dispatch. The default mode (no subcommand) is "serve" — boot
   // the proxy and listen for connections.
   if (argv[0] === 'run') {
@@ -408,6 +413,49 @@ async function main(): Promise<void> {
     logger.error({ error }, 'Failed to start server');
     process.exit(1);
   }
+}
+
+function printHelp(advanced: boolean): void {
+  const out = process.stdout;
+  out.write(`ts-agent-proxy — a network firewall for AI coding agents.
+
+USAGE
+  ts-agent-proxy run --profile <name> -- <command> [args...]
+  ts-agent-proxy tail [--blocks-only] [--json] [--since=5m]
+  ts-agent-proxy [--config=<path>] [--port=<n>]   # serve mode (default)
+
+SUBCOMMANDS
+  run           Start the proxy and run an agent under it (HTTPS_PROXY +
+                NODE_EXTRA_CA_CERTS injected; no system-trust changes).
+  tail          Stream blocked/allowed events from a running proxy.
+
+COMMON FLAGS
+  --profile=<name>           Pick a curated allowlist (--list-profiles to see)
+  --list-profiles            Print the built-in profiles and exit.
+  --allow-domain=<host>      Add an allow rule (repeatable).
+  --block-domain=<host>      Add a block rule (repeatable, always wins).
+  --block-ip-range=<cidr>    Block a destination IP range (repeatable).
+  --unsafe-disable-defaults  Turn off the IMDS/RFC1918/HTTPS-only defaults.
+  --port=<n>                 Bind the proxy to <n> (default 0 = random).
+  --config=<path>            Load a JSON or YAML policy from disk.
+`);
+  if (!advanced) {
+    out.write(`
+Run \`ts-agent-proxy --help --advanced\` for less-common flags
+(MITM cert management, admin endpoints, OTel, multi-tenant).
+`);
+    return;
+  }
+  out.write(`
+ADVANCED FLAGS
+  --mode=<tunnel|mitm>       Proxy mode (default: tunnel; run uses mitm).
+  --host=<addr>              Bind address for the proxy (default 127.0.0.1).
+  --admin-port=<n>           Enable admin server on <n> (health/metrics/SSE).
+  --watch                    Hot-reload the config file on change.
+
+For deeper topics — TLS MITM cert management, multi-tenant isolation,
+gRPC, OTel exporters, embedding the library — see docs/advanced.md.
+`);
 }
 
 function collectFlag(args: string[], flag: string): string[] {

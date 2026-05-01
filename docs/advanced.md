@@ -2,15 +2,13 @@
 
 This is an advanced reference. If you're new, start with the [README](../README.md).
 
-The topics below cover surface area that most users never touch — TLS MITM cert management, multi-tenant isolation, gRPC-Web specifics, OpenTelemetry exporter selection, library-mode embedding, Docker/Helm deployment.
+The topics below cover surface area most users never touch.
 
-Detailed pages will land here as the project matures. For now, refer to:
+- [MITM certificate management](advanced/mitm-cert-management.md) — how the local CA is generated, cached, and refreshed; where it lives on disk; how `run` injects it into the child without touching the system trust store.
+- [Multi-tenant isolation](advanced/multi-tenant.md) — running one proxy across multiple tenants with isolated allowlists.
+- [gRPC and gRPC-Web](advanced/grpc-web.md) — per-rule service/method allowlisting for gRPC traffic.
+- [OpenTelemetry exporters](advanced/otel-exporters.md) — selecting OTLP HTTP / OTLP gRPC / Jaeger.
+- [WASM sandbox bridge](advanced/wasm-bridge.md) — wiring the proxy into a WASI sandbox runtime.
+- [Embedding as a library](advanced/embedding.md) — programmatic API for hosting the proxy inside another service.
 
-- Source under `src/proxy/mitm/` for MITM cert generation and per-host cert caching.
-- `src/proxy/multi-tenant.ts` for per-tenant rule isolation.
-- `src/proxy/grpc-web-handler.ts` for gRPC-Web framing.
-- `src/telemetry/` for OpenTelemetry wiring (OTLP HTTP is the default; OTLP gRPC and Jaeger are also supported).
-- `src/integration/wasm-bridge.ts` for embedding the proxy alongside a WASI sandbox.
-- `Dockerfile` and `docker-compose.yml` for the reference stack with Prometheus + Grafana.
-
-Run `ts-agent-proxy --help --advanced` to see flags hidden from the common help output.
+For Docker / Kubernetes / Helm, see `Dockerfile`, `docker-compose.yml`, and the `monitoring/` directory at the repo root.
