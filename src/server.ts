@@ -29,6 +29,8 @@ import { createAdminServer, type AdminServer } from './admin/admin-server.js';
 export interface ProxyServerOptions {
   config: ProxyConfig;
   logger?: Logger;
+  /** Override the graceful shutdown timeout in ms (default 30000). */
+  shutdownTimeoutMs?: number;
 }
 
 /**
@@ -84,7 +86,7 @@ export class ProxyServer {
       logger: this.logger,
     });
 
-    this.shutdownTimeout = 30000; // 30 seconds default
+    this.shutdownTimeout = options.shutdownTimeoutMs ?? 30000;
 
     this.allowlistMatcher = createAllowlistMatcher(this.config.allowlist);
     this.rateLimiter = createRateLimiter(this.config.allowlist.rules);

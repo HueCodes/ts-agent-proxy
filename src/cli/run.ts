@@ -155,7 +155,13 @@ export async function runUnderProxy(opts: RunOptions): Promise<RunResult> {
   const proxyUrl = `http://127.0.0.1:${port}`;
   const adminUrl = `http://127.0.0.1:${adminPort}`;
 
-  const server: ProxyServer = createProxyServer({ config, logger });
+  const server: ProxyServer = createProxyServer({
+    config,
+    logger,
+    // The run subcommand is a foreground devtool; a fast shutdown matches the
+    // user's expectation that the proxy exits when the agent does.
+    shutdownTimeoutMs: 2_000,
+  });
   await server.start();
 
   // Pidfile lets `ts-agent-proxy tail` discover this run automatically.

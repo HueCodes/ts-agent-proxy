@@ -49,12 +49,21 @@ export class MitmInterceptor {
     const { host, port } = this.parseTarget(req.url ?? '');
     const sourceIp = this.getClientIp(req);
 
+    // Always have an error listener so a client RST during a denial doesn't
+    // bubble to the process-level uncaughtException handler.
+    clientSocket.on('error', (err) => {
+      this.options.logger.debug({ host, error: err.message }, 'MITM client socket error');
+    });
+
     this.options.logger.debug({ host, port, sourceIp }, 'MITM CONNECT request');
 
     // First check if domain is allowed at all
     const domainResult = this.options.allowlistMatcher.isDomainAllowed(host);
     if (!domainResult.allowed) {
-      this.sendForbidden(clientSocket, `Domain not allowed: ${host}`);
+      this.options.auditLogger.logRequest({ host, port, sourceIp }, domainResult, {
+        durationMs: 0,
+      });
+      this.sendForbidden(clientSocket, domainResult.reason);
       return;
     }
 
