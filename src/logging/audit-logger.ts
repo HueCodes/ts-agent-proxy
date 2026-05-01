@@ -225,6 +225,8 @@ export class AuditLogger {
   private readonly redactHeadersLower: Set<string>;
   private readonly piiPatterns: RegExp[];
   private writeStream: fs.WriteStream | undefined;
+  /** Live subscribers (used by the admin SSE stream and the `tail` CLI). */
+  private readonly subscribers: Set<(entry: AuditLogEntry) => void> = new Set();
 
   /**
    * Creates a new AuditLogger.
@@ -545,10 +547,34 @@ export class AuditLogger {
   }
 
   /**
+   * Subscribe to live audit entries. Returns an unsubscribe function. Used by
+   * the admin SSE stream and any embedding code that wants real-time events.
+   */
+  subscribe(callback: (entry: AuditLogEntry) => void): () => void {
+    this.subscribers.add(callback);
+    return () => {
+      this.subscribers.delete(callback);
+    };
+  }
+
+  /**
    * Write an entry to the audit log.
    */
   private writeEntry(entry: AuditLogEntry): void {
     const line = JSON.stringify(entry);
+
+    // Notify live subscribers first so they see events even if file/console
+    // sinks are slow.
+    for (const subscriber of this.subscribers) {
+      try {
+        subscriber(entry);
+      } catch (err) {
+        this.options.logger?.error(
+          { error: err },
+          'Audit subscriber threw; continuing with remaining subscribers',
+        );
+      }
+    }
 
     // Write to file if configured (legacy support)
     if (this.writeStream) {

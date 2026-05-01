@@ -128,6 +128,7 @@ export class ProxyServer {
         metrics: this.metrics,
         getRulesCount: () => this.config.allowlist.rules.length,
         isReady: () => this.isRunning,
+        auditLogger: this.auditLogger,
       });
     }
   }

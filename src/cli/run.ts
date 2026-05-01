@@ -15,6 +15,7 @@ import { createLogger } from '../logging/logger.js';
 import { applySafeDefaults } from '../profiles/safe-defaults.js';
 import { getProfile, mergeProfile } from '../profiles/index.js';
 import { ensureCa, type CaPaths } from './ca-cache.js';
+import { writePidfile, removePidfile } from './pidfile.js';
 
 export interface RunOptions {
   /** Profile name (e.g., 'claude-code'). Default: 'generic-agent'. */
@@ -67,7 +68,12 @@ async function pickFreePort(): Promise<number> {
 /**
  * Build a proxy config in MITM mode wired to the cached CA + selected profile.
  */
-function buildConfig(opts: RunOptions, caPaths: CaPaths, port: number): ProxyConfig {
+function buildConfig(
+  opts: RunOptions,
+  caPaths: CaPaths,
+  port: number,
+  adminPort: number,
+): ProxyConfig {
   const config = createDefaultConfig();
   config.server.host = '127.0.0.1';
   config.server.port = port;
@@ -78,6 +84,12 @@ function buildConfig(opts: RunOptions, caPaths: CaPaths, port: number): ProxyCon
     autoGenerateCa: false,
   };
   config.server.logging = { ...config.server.logging, level: 'info' };
+  // Admin server hosts the audit SSE stream that `tail` consumes.
+  config.server.admin = {
+    enabled: true,
+    host: '127.0.0.1',
+    port: adminPort,
+  };
 
   // Apply --profile
   const profileName = opts.profile;
@@ -138,14 +150,23 @@ export async function runUnderProxy(opts: RunOptions): Promise<RunResult> {
 
   const caPaths = ensureCa();
   const port = opts.port ?? (await pickFreePort());
-  const config = buildConfig(opts, caPaths, port);
+  const adminPort = await pickFreePort();
+  const config = buildConfig(opts, caPaths, port, adminPort);
   const proxyUrl = `http://127.0.0.1:${port}`;
+  const adminUrl = `http://127.0.0.1:${adminPort}`;
 
   const server: ProxyServer = createProxyServer({ config, logger });
   await server.start();
 
+  // Pidfile lets `ts-agent-proxy tail` discover this run automatically.
+  writePidfile({
+    pid: process.pid,
+    adminUrl,
+    startedAt: new Date().toISOString(),
+  });
+
   logger.info(
-    { proxyUrl, profile: opts.profile, command: opts.command.join(' ') },
+    { proxyUrl, adminUrl, profile: opts.profile, command: opts.command.join(' ') },
     `proxy listening on ${proxyUrl} — running: ${opts.command[0]}`,
   );
 
@@ -155,7 +176,12 @@ export async function runUnderProxy(opts: RunOptions): Promise<RunResult> {
     stdio: 'inherit',
   });
 
-  const exitCode = await orchestrateLifecycle(child, server);
+  let exitCode: number;
+  try {
+    exitCode = await orchestrateLifecycle(child, server);
+  } finally {
+    removePidfile();
+  }
 
   return {
     exitCode,

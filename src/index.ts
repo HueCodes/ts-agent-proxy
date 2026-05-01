@@ -175,6 +175,18 @@ async function main(): Promise<void> {
     process.exit(result.exitCode);
   }
 
+  if (argv[0] === 'tail') {
+    const { tail } = await import('./cli/tail.js');
+    const opts = argv.slice(1);
+    await tail({
+      adminUrl: opts.find((a) => a.startsWith('--admin-url='))?.split('=')[1],
+      blocksOnly: opts.includes('--blocks-only'),
+      json: opts.includes('--json'),
+      since: opts.find((a) => a.startsWith('--since='))?.split('=')[1],
+    });
+    return;
+  }
+
   const logger = createLogger({ level: 'info', pretty: true });
   const version = getVersion();
 

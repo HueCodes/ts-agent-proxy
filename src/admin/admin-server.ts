@@ -12,6 +12,7 @@ import type { Logger } from '../logging/logger.js';
 import type { MetricsCollector, ProxyMetrics } from './metrics.js';
 import type { PrometheusMetrics } from './prometheus-metrics.js';
 import type { AdminAuthConfig } from '../types/config.js';
+import type { AuditLogger, AuditLogEntry } from '../logging/audit-logger.js';
 import { AdminAuth, DEFAULT_ADMIN_AUTH_CONFIG } from './auth.js';
 
 /**
@@ -34,6 +35,10 @@ export interface AdminServerConfig {
   isReady: () => boolean;
   /** Authentication configuration */
   auth?: AdminAuthConfig;
+  /** Audit logger to expose via the /api/audit/stream SSE endpoint */
+  auditLogger?: AuditLogger;
+  /** Most-recent audit entries to replay on stream connect (?since=…) */
+  auditHistorySize?: number;
 }
 
 /**
@@ -72,6 +77,10 @@ export class AdminServer {
   private readonly auth: AdminAuth;
   private server?: http.Server;
   private startTime: number = Date.now();
+  /** Ring buffer of recent audit entries for stream replay. */
+  private readonly auditHistory: AuditLogEntry[] = [];
+  private readonly auditHistoryLimit: number;
+  private auditUnsubscribe: (() => void) | undefined;
 
   /**
    * Creates a new AdminServer.
@@ -81,6 +90,15 @@ export class AdminServer {
   constructor(config: AdminServerConfig) {
     this.config = config;
     this.auth = new AdminAuth(config.auth ?? DEFAULT_ADMIN_AUTH_CONFIG, config.logger);
+    this.auditHistoryLimit = Math.max(0, config.auditHistorySize ?? 1000);
+    if (config.auditLogger && this.auditHistoryLimit > 0) {
+      this.auditUnsubscribe = config.auditLogger.subscribe((entry) => {
+        this.auditHistory.push(entry);
+        if (this.auditHistory.length > this.auditHistoryLimit) {
+          this.auditHistory.shift();
+        }
+      });
+    }
   }
 
   /**
@@ -122,6 +140,10 @@ export class AdminServer {
    * @returns Promise that resolves when server is stopped
    */
   async stop(): Promise<void> {
+    if (this.auditUnsubscribe) {
+      this.auditUnsubscribe();
+      this.auditUnsubscribe = undefined;
+    }
     if (!this.server) return;
 
     return new Promise((resolve, reject) => {
@@ -174,6 +196,9 @@ export class AdminServer {
           break;
         case '/metrics/prometheus':
           await this.handlePrometheusMetrics(req, res);
+          break;
+        case '/api/audit/stream':
+          this.handleAuditStream(req, res, url);
           break;
         default:
           this.handleNotFound(req, res);
@@ -250,6 +275,60 @@ export class AdminServer {
   }
 
   /**
+   * Handle GET /api/audit/stream — Server-Sent Events stream of audit entries.
+   *
+   * Query params:
+   *   ?since=Nm — replay the last N minutes from the in-memory ring buffer.
+   *   ?include=blocks-only — only forward denied/rate-limited entries.
+   */
+  private handleAuditStream(req: IncomingMessage, res: ServerResponse, url: URL): void {
+    if (!this.config.auditLogger) {
+      res.writeHead(404);
+      res.end(JSON.stringify({ error: 'audit stream not configured' }));
+      return;
+    }
+
+    const blocksOnly = url.searchParams.get('include') === 'blocks-only';
+    const sinceParam = url.searchParams.get('since');
+    const sinceMs = sinceParam ? parseDurationMs(sinceParam) : undefined;
+
+    res.writeHead(200, {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache, no-store, must-revalidate',
+      Connection: 'keep-alive',
+      'X-Accel-Buffering': 'no',
+    });
+    res.write('retry: 2000\n\n');
+
+    const send = (entry: AuditLogEntry): void => {
+      if (blocksOnly && entry.decision === 'allowed') return;
+      res.write(`data: ${JSON.stringify(entry)}\n\n`);
+    };
+
+    if (sinceMs !== undefined) {
+      const cutoff = Date.now() - sinceMs;
+      for (const entry of this.auditHistory) {
+        if (Date.parse(entry.timestamp) >= cutoff) send(entry);
+      }
+    }
+
+    const unsubscribe = this.config.auditLogger.subscribe(send);
+
+    const keepalive = setInterval(() => {
+      res.write(': keepalive\n\n');
+    }, 15_000);
+
+    const close = (): void => {
+      clearInterval(keepalive);
+      unsubscribe();
+      res.end();
+    };
+
+    req.on('close', close);
+    req.on('aborted', close);
+  }
+
+  /**
    * Handle 404 Not Found.
    */
   private handleNotFound(_req: IncomingMessage, res: ServerResponse): void {
@@ -257,7 +336,7 @@ export class AdminServer {
     res.end(
       JSON.stringify({
         error: 'Not found',
-        endpoints: ['/health', '/ready', '/metrics', '/metrics/prometheus'],
+        endpoints: ['/health', '/ready', '/metrics', '/metrics/prometheus', '/api/audit/stream'],
       }),
     );
   }
@@ -270,6 +349,29 @@ export class AdminServer {
     const addr = this.server.address();
     if (!addr || typeof addr === 'string') return null;
     return { host: this.config.host, port: addr.port };
+  }
+}
+
+/**
+ * Parse a duration string like "5m", "30s", "2h" into milliseconds. Returns
+ * undefined for unparseable input — callers should treat that as "no replay".
+ */
+function parseDurationMs(input: string): number | undefined {
+  const match = /^(\d+)\s*(ms|s|m|h)?$/i.exec(input.trim());
+  if (!match) return undefined;
+  const n = parseInt(match[1]!, 10);
+  if (!Number.isFinite(n)) return undefined;
+  switch ((match[2] ?? 's').toLowerCase()) {
+    case 'ms':
+      return n;
+    case 's':
+      return n * 1000;
+    case 'm':
+      return n * 60_000;
+    case 'h':
+      return n * 3_600_000;
+    default:
+      return undefined;
   }
 }
 
