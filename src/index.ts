@@ -1,5 +1,5 @@
 /**
- * Agent Network Proxy - HTTP Allowlist Proxy for AI Agents
+ * ts-agent-proxy — a network firewall for AI coding agents.
  *
  * Entry point and main exports.
  */
@@ -173,7 +173,7 @@ async function main(): Promise<void> {
       arch: process.arch,
       pid: process.pid,
     },
-    'ts-agent-proxy starting',
+    'ts-agent-proxy starting (network firewall for AI coding agents)',
   );
 
   // Load configuration

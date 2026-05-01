@@ -1,132 +1,140 @@
 # ts-agent-proxy
 
-HTTP allowlist proxy for filtering AI agent network requests.
+A network firewall for AI coding agents.
 
-## Features
+## The problem
 
-- **Domain allowlisting** - Control which domains agents can access
-- **Wildcard support** - `*.example.com` or `**.example.com` patterns
-- **Path filtering** - Glob patterns for allowed paths (MITM mode)
-- **Method filtering** - Restrict HTTP methods per rule
-- **Rate limiting** - Per-rule request limits
-- **Audit logging** - Security logs for all decisions
-- **Two modes**:
-  - **Tunnel mode** (default) - CONNECT tunneling, domain-level filtering
-  - **MITM mode** - Full inspection with dynamic certificates
+You hand a long-running task to Claude Code, Cursor, Codex, or an OpenHands worker and walk away. While you're not looking, the agent installs an MCP server you didn't vet, calls a typo-squatted package mirror, queries `169.254.169.254` for cloud credentials, or POSTs an API key to a webhook it found in some scraped README. The first time you find out is when the bill arrives — or when someone else's agent does it to you.
 
-## Installation
+`ts-agent-proxy` sits in front of the agent and only lets through the network calls you sanctioned. Everything else is denied and logged.
+
+## 30-second demo
 
 ```bash
-npm install
-npm run build
+# In one terminal: run the agent under the proxy
+npx ts-agent-proxy run --profile claude-code -- claude
+
+# In another terminal: watch what gets blocked, live
+npx ts-agent-proxy tail --blocks-only
 ```
 
-## Usage
+<!-- TODO(checkpoint-9): replace with a recorded GIF -->
 
-### Start the Proxy
+```
+TIME       VERDICT  METHOD  HOST                          PATH                    REASON
+14:02:11   BLOCK    GET     169.254.169.254               /latest/meta-data       safe-default-imds
+14:02:14   ALLOW    POST    api.anthropic.com             /v1/messages            profile:claude-code
+14:02:18   BLOCK    GET     evil-anthropoc.com            /api                    safe-default-typo-squat
+```
+
+## Install
 
 ```bash
-# Development
-npm run dev
-
-# Production
-npm start
-
-# With options
-npm start -- --port=8080 --host=127.0.0.1 --mode=tunnel
+npm install -g ts-agent-proxy
 ```
 
-### Configure Allowlist
+## Profiles
 
-Edit `config/allowlist.json`:
+Pick the agent you're running. Profiles are curated allowlists.
 
-```json
-{
-  "mode": "strict",
-  "defaultAction": "deny",
-  "rules": [
-    {
-      "id": "openai-api",
-      "domain": "api.openai.com",
-      "paths": ["/v1/chat/completions", "/v1/models"],
-      "methods": ["POST", "GET"],
-      "rateLimit": { "requestsPerMinute": 60 }
-    },
-    {
-      "id": "github-readonly",
-      "domain": "api.github.com",
-      "paths": ["/repos/**", "/users/**"],
-      "methods": ["GET"]
-    }
-  ]
-}
-```
-
-### Test the Proxy
+| Profile | For |
+|---|---|
+| `claude-code` | Anthropic Claude Code CLI |
+| `codex` | OpenAI Codex CLI |
+| `cursor` | Cursor's background agents |
+| `generic-agent` | Anything else (broadest reasonable defaults) |
 
 ```bash
-# Allowed request
-curl -x http://127.0.0.1:8080 https://api.openai.com/v1/models
-
-# Blocked request (should return 403)
-curl -x http://127.0.0.1:8080 https://evil.com
+ts-agent-proxy --list-profiles
+ts-agent-proxy run --profile claude-code -- claude
 ```
 
-### Use with AI Agents
+Extend a profile with `--allow-domain` (additive) or override entirely with `--config`.
 
-Set environment variables:
+## Policy as YAML
 
-```bash
-export HTTP_PROXY=http://127.0.0.1:8080
-export HTTPS_PROXY=http://127.0.0.1:8080
+```yaml
+profile: claude-code
+
+allow:
+  domains:
+    - api.anthropic.com
+    - github.com
+  paths:
+    "github.com":
+      - /HueCodes/*
+
+block:
+  domains:
+    - evil.com
+  ips:
+    - 10.0.0.0/8
+
+redact:
+  patterns:
+    - name: anthropic-key
+      regex: 'sk-ant-[a-zA-Z0-9-]{40,}'
+    - name: github-token
+      regex: 'gh[pousr]_[A-Za-z0-9]{36,}'
 ```
 
-## Running Tests
+JSON works too. Both are validated; errors include line and column.
 
-```bash
-npm test                    # Unit tests
-npm run test:integration    # Integration tests
+## What it catches by default
+
+Even with no policy file, these are blocked:
+
+- **Cloud metadata endpoints** — IMDS at `169.254.169.254`, `metadata.google.internal`, Azure metadata DNS
+- **Private IP ranges** — RFC1918 (`10/8`, `172.16/12`, `192.168/16`), loopback, link-local
+- **DNS rebinding** — domains that resolve to a blocked IP
+- **Plaintext HTTP egress** — to anything not explicitly allowlisted
+- **Common typo-squats** — for the major LLM API hosts
+
+Disable with `--unsafe-disable-defaults` (named to be loud).
+
+## What it does NOT do
+
+This is a network-layer tool. It cannot stop:
+
+- Code execution that doesn't make outbound network calls (rm -rf, local file exfiltration to a mounted volume)
+- Traffic that bypasses the proxy environment variables (raw sockets, agents that ignore `HTTPS_PROXY`)
+- Attacks against an allowlisted destination from a compromised allowlisted destination
+
+Pair it with a sandbox if those matter to you.
+
+## Architecture
+
+```
+     ┌───────────────┐                 ┌─────────────────┐
+     │   AI agent    │                 │   policy.yaml   │
+     │ (claude/codex │                 │   + profile     │
+     │  /cursor)     │                 └────────┬────────┘
+     └───────┬───────┘                          │
+             │ HTTP_PROXY=127.0.0.1:54321       │
+             ▼                                  ▼
+     ┌────────────────────────────────────────────────┐
+     │                ts-agent-proxy                  │
+     │  ┌─────────┐  ┌────────┐  ┌──────────────────┐ │
+     │  │ CONNECT │─▶│ filter │─▶│ secret redaction │ │
+     │  │  /MITM  │  │ (allow/│  │ MCP-aware audit  │ │
+     │  └─────────┘  │  block)│  └──────────────────┘ │
+     │               └────────┘                       │
+     └────────────────────┬───────────────────────────┘
+                          │ allowed only
+                          ▼
+                   ┌──────────────┐
+                   │   Internet   │
+                   └──────────────┘
 ```
 
-## API (Programmatic Usage)
+## Advanced
 
-```typescript
-import { createProxyServer, loadAllowlistConfig } from 'ts-agent-proxy';
+For TLS MITM cert management, multi-tenant isolation, gRPC-Web, OTel exporter selection, Helm charts, and library-mode embedding, see [docs/advanced.md](docs/advanced.md).
 
-const config = {
-  server: {
-    host: '127.0.0.1',
-    port: 8080,
-    mode: 'tunnel',
-    logging: { level: 'info', console: true, pretty: true }
-  },
-  allowlist: loadAllowlistConfig('./config/allowlist.json')
-};
+## Status
 
-const server = createProxyServer({ config });
-await server.start();
+Pre-1.0. Core filtering, audit logging, and CONNECT/MITM modes are stable and well-tested. The profile system, `run`/`tail` subcommands, YAML loader, secret redaction, and MCP awareness shipped in v0.2; treat them as new and report rough edges. Library-mode programmatic API is stable; CLI surface may still shift before 1.0.
 
-// Reload allowlist at runtime
-server.reloadAllowlist(newAllowlistConfig);
+## License
 
-// Stop
-await server.stop();
-```
-
-## Integration with Wasm Sandbox
-
-```typescript
-import { generateSandboxNetworkConfig } from 'ts-agent-proxy';
-
-const sandboxConfig = generateSandboxNetworkConfig('127.0.0.1', 8080);
-// Returns environment variables and WASI config for routing
-// sandbox traffic through the proxy
-```
-
-## Domain Pattern Examples
-
-| Pattern | Matches |
-|---------|---------|
-| `api.example.com` | Exact match only |
-| `*.example.com` | `foo.example.com` (one level) |
-| `**.example.com` | `foo.bar.example.com` (any depth) |
+MIT.

@@ -1,7 +1,7 @@
 {
   "name": "ts-agent-proxy",
   "version": "0.1.0",
-  "description": "HTTP allowlist proxy for AI agent network filtering",
+  "description": "A network firewall for AI coding agents — block typo-squats, IMDS, secret exfiltration, and unsanctioned MCP servers.",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -21,10 +21,16 @@
     "dev:stack": "docker compose up --build"
   },
   "keywords": [
+    "ai-agent",
+    "agent-security",
+    "claude-code",
+    "codex",
+    "mcp",
+    "egress-firewall",
+    "ssrf-protection",
+    "llm-security",
     "proxy",
-    "allowlist",
-    "security",
-    "ai-agent"
+    "allowlist"
   ],
   "license": "MIT",
   "dependencies": {
